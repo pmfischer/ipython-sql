@@ -82,6 +82,9 @@ class SqlMagic(Magics, Configurable):
         Configurable.__init__(self, config=shell.config)
         Magics.__init__(self, shell=shell)
 
+        self._store = [] # Record sequence of SQL invocations
+        shell.user_ns['__querylog'] = self._store # publish as notebook variable
+
         # Add ourself to the list of module configurable via %config
         self.shell.configurables.append(self)
 
@@ -222,6 +225,7 @@ class SqlMagic(Magics, Configurable):
             return
 
         try:
+            self._store.append(parsed["sql"]) # Record invocations, even if not successful
             result = sql.run.run(conn, parsed["sql"], self, user_ns)
 
             if (
