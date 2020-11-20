@@ -48,16 +48,23 @@ def parse(cell, config):
 
     result = {"connection": "", "sql": "", "result_var": None}
 
+        trimmed = False
     pieces = cell.split(None, 3)
     if not pieces:
         return result
     result["connection"] = _connection_string(pieces[0], config)
     if result["connection"]:
         pieces.pop(0)
+        trimmed = True
     if len(pieces) > 1 and pieces[1] == "<<":
         result["result_var"] = pieces.pop(0)
         pieces.pop(0)  # discard << operator
-    result["sql"] = stripComments(" ".join(pieces).strip())
+        trimmed = True
+    if trimmed:
+        allpieces = (" ".join(pieces))
+    else:
+        allpieces = cell # attempted removal of connection/wariable removes newline
+    result["sql"] = stripComments(allpieces).strip()
     return result
 
 
