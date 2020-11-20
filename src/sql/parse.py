@@ -57,7 +57,7 @@ def parse(cell, config):
     if len(pieces) > 1 and pieces[1] == "<<":
         result["result_var"] = pieces.pop(0)
         pieces.pop(0)  # discard << operator
-    result["sql"] = stripComments(" ".join(pieces)).strip())
+    result["sql"] = stripComments(" ".join(pieces).strip())
     return result
 
 
