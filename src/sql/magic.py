@@ -1,6 +1,8 @@
 import json
 import re
+from datetime import datetime
 from string import Formatter
+from elasticsearch import Elasticsearch
 
 from IPython.core.magic import (
     Magics,
@@ -84,6 +86,8 @@ class SqlMagic(Magics, Configurable):
 
         self._store = [] # Record sequence of SQL invocations
         shell.user_ns['__querylog'] = self._store # publish as notebook variable
+
+        self._log = Elasticsearch("http://crater.informatik.uni-augsburg.de:9200")
 
         # Add ourself to the list of module configurable via %config
         self.shell.configurables.append(self)
@@ -217,6 +221,14 @@ class SqlMagic(Magics, Configurable):
         try:
             self._store.append(parsed["sql"]) # Record invocations, even if not successful
             result = sql.run.run(conn, parsed["sql"], self, user_ns)
+
+            if self._log is not None:
+                doc = {
+                    'session': 'placeholder',
+                    'query': parsed["sql"],
+                    'timestamp': datetime.now(),
+                }
+                self._log.index(index="test-sql-index", document=doc)
 
             if (
                 result is not None
