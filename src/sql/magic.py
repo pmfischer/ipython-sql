@@ -226,6 +226,9 @@ class SqlMagic(Magics, Configurable):
                 doc = {
                     'session': 'placeholder',
                     'query': parsed["sql"],
+                    'returncode': "None",
+                    'result_rows' : len(result),
+                    'cell_id' : "abcd",
                     'timestamp': datetime.now(),
                 }
                 self._log.index(index="test-sql-index", document=doc)
