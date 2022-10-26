@@ -89,8 +89,10 @@ class SqlMagic(Magics, Configurable):
         shell.user_ns['__querylog'] = self._store # publish as notebook variable
 
         self.session_id = uuid4()
-
-        self._log = Elasticsearch("http://crater.informatik.uni-augsburg.de:9200")
+        try:
+            self._log = Elasticsearch("http://crater.informatik.uni-augsburg.de:9200")
+        except Exception as e:
+                print(e)
 
         # Add ourself to the list of module configurable via %config
         self.shell.configurables.append(self)
@@ -156,6 +158,7 @@ class SqlMagic(Magics, Configurable):
           mysql+pymysql://me:mypw@localhost/mydb
 
         """
+        raw_cell = cell
         # Parse variables (words wrapped in {}) for %%sql magic (for %sql this is done automatically)
         cell = self.shell.var_expand(cell)
         line = sql.parse.without_sql_comment(parser=self.execute.parser, line=line)
@@ -231,10 +234,13 @@ class SqlMagic(Magics, Configurable):
                     'query': parsed["sql"],
                     'returncode': "None",
                     'result_rows' : len(result),
-                    'cell_id' : cell,
+                    'cell_id' : raw_cell,
                     'timestamp': datetime.now(),
                 }
-                self._log.index(index="test-sql-index", document=doc)
+                try:
+                    self._log.index(index="test-sql-index", document=doc)
+                except Exception as e:
+                    pass
 
             if (
                 result is not None
@@ -272,6 +278,19 @@ class SqlMagic(Magics, Configurable):
         # JA: added DatabaseError for MySQL
         except (ProgrammingError, OperationalError, DatabaseError) as e:
             # Sqlite apparently return all errors as OperationalError :/
+            if self._log is not None:
+                doc = {
+                    'session': self.session_id,
+                    'query': parsed["sql"],
+                    'returncode': str(e),
+                    'result_rows' : len(result),
+                    'cell_id' : raw_cell,
+                    'timestamp': datetime.now(),
+                }
+                try:
+                    self._log.index(index="test-sql-index", document=doc)
+                except Exception as e:
+                    pass
             if self.short_errors:
                 print(e)
             else:
