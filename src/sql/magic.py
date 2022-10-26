@@ -283,7 +283,7 @@ class SqlMagic(Magics, Configurable):
                     'session': self.session_id,
                     'query': parsed["sql"],
                     'returncode': str(e),
-                    'result_rows' : len(result),
+                    'result_rows' : '',
                     'cell_id' : raw_cell,
                     'timestamp': datetime.now(),
                 }
