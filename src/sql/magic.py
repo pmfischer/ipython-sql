@@ -2,6 +2,7 @@ import json
 import re
 from datetime import datetime
 from string import Formatter
+from uuid import uuid4
 from elasticsearch import Elasticsearch
 
 from IPython.core.magic import (
@@ -86,6 +87,8 @@ class SqlMagic(Magics, Configurable):
 
         self._store = [] # Record sequence of SQL invocations
         shell.user_ns['__querylog'] = self._store # publish as notebook variable
+
+        self.session_id = uuid4()
 
         self._log = Elasticsearch("http://crater.informatik.uni-augsburg.de:9200")
 
@@ -224,11 +227,11 @@ class SqlMagic(Magics, Configurable):
 
             if self._log is not None:
                 doc = {
-                    'session': 'placeholder',
+                    'session': self.session_id,
                     'query': parsed["sql"],
                     'returncode': "None",
                     'result_rows' : len(result),
-                    'cell_id' : "abcd",
+                    'cell_id' : cell,
                     'timestamp': datetime.now(),
                 }
                 self._log.index(index="test-sql-index", document=doc)
