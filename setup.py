@@ -1,51 +1,108 @@
 import os
 from io import open
+import re
+import ast
 
 from setuptools import find_packages, setup
 
 here = os.path.abspath(os.path.dirname(__file__))
-README = open(os.path.join(here, "README.rst"), encoding="utf-8").read()
-NEWS = open(os.path.join(here, "NEWS.rst"), encoding="utf-8").read()
+README = open(os.path.join(here, "README.md"), encoding="utf-8").read()
 
+_version_re = re.compile(r"__version__\s+=\s+(.*)")
 
-version = "0.4.1"
+with open("src/sql/__init__.py", "rb") as f:
+    VERSION = str(
+        ast.literal_eval(_version_re.search(f.read().decode("utf-8")).group(1))
+    )
 
 install_requires = [
-    "prettytable<1",
-    "ipython>=1.0",
-    "sqlalchemy>=0.6.7",
+    "prettytable",
+    # IPython dropped support for Python 3.8
+    "ipython<=8.12.0; python_version <= '3.8'",
+    "ipython",
+    "sqlalchemy",
     "sqlparse",
-    "six",
     "ipython-genutils>=0.1.0",
+    "sqlglot",
+    "jinja2",
+    "sqlglot>=11.3.7",
+    "ploomber-core>=0.2.7",
+    'importlib-metadata;python_version<"3.8"',
 ]
 
+DEV = [
+    "flake8",
+    "pytest",
+    "pandas",
+    "polars==0.17.2",  # 04/18/23 this breaks our CI
+    "pyarrow",
+    "invoke",
+    "pkgmt",
+    "twine",
+    # tests
+    "duckdb<0.8.0",
+    "duckdb-engine",
+    "pyodbc",
+    # sql.plot module tests
+    "matplotlib",
+    "black",
+    # for %%sql --interact
+    "ipywidgets",
+    # for running tests for %sqlcmd explore --table
+    "js2py",
+    "jupysql-plugin",
+    # for monitoring access to files
+    "psutil",
+    # for running tests for %sqlcmd connect
+    "jupyter-server",
+]
+
+# dependencies for running integration tests
+INTEGRATION = [
+    "dockerctx",
+    "pyarrow",
+    "psycopg2-binary",
+    "pymysql",
+    "pgspecial==2.0.1",
+    "pyodbc",
+    "snowflake-sqlalchemy",
+    "oracledb",
+    "sqlalchemy-pytds",
+    "python-tds",
+    # redshift
+    "redshift-connector",
+    "sqlalchemy-redshift",
+    "clickhouse-sqlalchemy",
+]
 
 setup(
-    name="ipython-sql",
-    version=version,
-    description="RDBMS access via IPython",
-    long_description=README + "\n\n" + NEWS,
-    long_description_content_type="text/x-rst",
+    name="jupysql",
+    version=VERSION,
+    description="Better SQL in Jupyter",
+    long_description=README,
+    long_description_content_type="text/markdown",
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Environment :: Console",
-        "License :: OSI Approved :: MIT License",
+        "License :: OSI Approved :: Apache Software License",
         "Topic :: Database",
         "Topic :: Database :: Front-Ends",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 2",
     ],
-    keywords="database ipython postgresql mysql",
-    author="Catherine Devlin",
-    author_email="catherine.devlin@gmail.com",
-    url="https://github.com/catherinedevlin/ipython-sql",
+    keywords="database ipython postgresql mysql duckdb",
+    author="Ploomber",
+    author_email="contact@ploomber.io",
+    url="https://github.com/ploomber/jupysql",
     project_urls={
-        "Source": "https://github.com/catherinedevlin/ipython-sql",
+        "Source": "https://github.com/ploomber/jupysql",
     },
-    license="MIT",
     packages=find_packages("src"),
     package_dir={"": "src"},
     include_package_data=True,
     zip_safe=False,
     install_requires=install_requires,
+    extras_require={
+        "dev": DEV,
+        "integration": DEV + INTEGRATION,
+    },
 )

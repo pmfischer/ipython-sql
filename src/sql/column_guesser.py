@@ -16,7 +16,7 @@ class Column(list):
 
 def is_quantity(val):
     """Is ``val`` a quantity (int, float, datetime, etc) (not str, bool)?
-    
+
     Relies on presence of __sub__.
     """
     return hasattr(val, "__sub__")
@@ -28,16 +28,19 @@ class ColumnGuesserMixin(object):
     pie: ... y
     """
 
+    def __init__(self):
+        self.keys = None
+
     def _build_columns(self):
         self.columns = [Column() for col in self.keys]
         for row in self:
-            for (col_idx, col_val) in enumerate(row):
+            for col_idx, col_val in enumerate(row):
                 col = self.columns[col_idx]
                 col.append(col_val)
                 if (col_val is not None) and (not is_quantity(col_val)):
                     col.is_quantity = False
 
-        for (idx, key_name) in enumerate(self.keys):
+        for idx, key_name in enumerate(self.keys):
             self.columns[idx].name = key_name
 
         self.x = Column()
@@ -73,8 +76,8 @@ class ColumnGuesserMixin(object):
     def guess_pie_columns(self, xlabel_sep=" "):
         """
         Assigns x, y, and x labels from the data set for a pie chart.
-        
-        Pie charts simply use the last quantity column as 
+
+        Pie charts simply use the last quantity column as
         the pie slice size, and everything else as the
         pie slice labels.
         """
@@ -84,7 +87,7 @@ class ColumnGuesserMixin(object):
     def guess_plot_columns(self):
         """
         Assigns ``x`` and ``y`` series from the data set for a plot.
-        
+
         Plots use:
           the rightmost quantity column as a Y series
           optionally, the leftmost quantity column as the X series

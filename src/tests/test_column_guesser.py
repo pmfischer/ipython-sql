@@ -1,11 +1,10 @@
-import re
-import sys
-
 import pytest
 
 from sql.magic import SqlMagic
+from sql import _current
+from IPython.core.interactiveshell import InteractiveShell
 
-ip = get_ipython()
+ip = InteractiveShell()
 
 
 class SqlEnv(object):
@@ -22,6 +21,7 @@ sql_env = SqlEnv("sqlite://")
 @pytest.fixture
 def tbl():
     sqlmagic = SqlMagic(shell=ip)
+    _current._set_sql_magic(sqlmagic)
     ip.register_magics(sqlmagic)
     creator = """
         DROP TABLE IF EXISTS manycoltbl;
