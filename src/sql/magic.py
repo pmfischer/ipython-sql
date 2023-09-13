@@ -610,7 +610,7 @@ class SqlMagic(Magics, Configurable):
             if self._log is not None:
                 doc = {
                     'session': self.session_id,
-                    'query': parsed["sql"],
+                    'query': command.sql,
                     'returncode': str(e),
                     'result_rows' : '',
                     'cell_id' : raw_cell,
