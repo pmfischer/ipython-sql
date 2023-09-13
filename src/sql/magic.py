@@ -618,7 +618,7 @@ class SqlMagic(Magics, Configurable):
                 }
                 try:
                     self._log.index(index="test-sql-index", document=doc)
-                except Exception as e:
+                except Exception as f:
                     pass
             handle_exception(e, command.sql, self.short_errors)
         except Exception as e:
