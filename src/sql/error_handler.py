@@ -81,9 +81,12 @@ def _display_error_msg_with_trace(error, message):
 def _raise_error(error, message, error_type):
     """Raise specific error from the detailed message. If detailed
     message is None reraise original error"""
+    print ("Raise ", str(error_type))
     if message is not None:
+        print ("With msg")
         raise error_type(message) from error
     else:
+        print ("Runtime")
         raise RuntimeError(str(error)) from error
 
 
@@ -92,11 +95,16 @@ def handle_exception(error, query=None, short_error=True):
     This function is the entry point for detecting error type
     and handling it accordingly.
     """
+    print ("handle_exception" , error)
     if util.is_sqlalchemy_error(error) or util.is_non_sqlalchemy_error(error):
         detailed_message, error_type = _detailed_message_with_error_type(error, query)
+        print ("Info", error_type)
         if short_error:
-            _raise_error(error, detailed_message, error_type)
+            print(error)
+                  #raise error
+            #_raise_error(error, detailed_message, error_type)
         else:
             _display_error_msg_with_trace(error, detailed_message)
     else:
+        print ("Raise again")
         raise error

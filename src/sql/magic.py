@@ -189,7 +189,7 @@ class SqlMagic(Magics, Configurable):
 
         self.session_id = uuid4()
         try:
-            self._log = Elasticsearch("http://crater.informatik.uni-augsburg.de:9200")
+            self._log = Elasticsearch("http://triangulum.informatik.uni-augsburg.de:9200")
         except Exception as e:
                 print(e)
 
@@ -622,6 +622,7 @@ class SqlMagic(Magics, Configurable):
                     pass
             handle_exception(e, command.sql, self.short_errors)
         except Exception as e:
+            print ("Non-Alchemy")
             # Handle non SQLAlchemy errors
             handle_exception(e, command.sql, self.short_errors)
 
