@@ -234,17 +234,50 @@ value enables the ones from previous values plus new ones:
 - `2`: All feedback
   - Footer to distinguish pandas/polars data frames from JupySQL's result sets
 
-## `named_parameters`
+## `lazy_execution`
 
-```{versionadded} 0.9
+```{versionadded} 0.10.7
+This option only works when connecting to Spark
 ```
 
 Default: `False`
 
-If True, it enables named parameters `:variable`. Learn more in the [tutorial.](../user-guide/template.md)
+Return lazy relation to dataset rather than executing through JupySql.
 
 ```{code-cell} ipython3
-%config SqlMagic.named_parameters=True
+%config SqlMagic.lazy_execution = True
+df = %sql SELECT * FROM languages
+```
+
+```{code-cell} ipython3
+%config SqlMagic.lazy_execution = False
+res = %sql SELECT * FROM languages
+```
+
+## `named_parameters`
+
+```{versionchanged} 0.10.9
+```
+
+Default: `warn`
+
+If `warn`, a warning will be raised when named parameters are included in the statement.
+If `enabled`, the statement will be executed with named parameters enabled.
+If `disabled`, the statement will be executed with named parameters disabled.
+
+```{important}
+The `disabled` feature makes use of SQLAlchemy's `exec_driver_sql()` instead of `execute()`
+to execute SQL statements without the use of bound parameters. This operation doesn't include 
+other SQL compilation steps which could affect the behavior of your program.
+If you encounter problems, please open an issue on [Slack](https://ploomber.io/community) or [Github](https://github.com/ploomber/jupysql).
+```
+
+Learn more in the [tutorial.](../user-guide/template.md)
+
+Named parameters can be declared with `:variable`. 
+
+```{code-cell} ipython3
+%config SqlMagic.named_parameters="enabled"
 ```
 
 ```{code-cell} ipython3
@@ -317,12 +350,16 @@ res = %sql SELECT * FROM languages LIMIT 2
 print(res)
 ```
 
-## Loading from `pyproject.toml`
+## Loading from a file
 
 ```{versionadded} 0.9
 ```
 
-You can define configurations in a `pyproject.toml` file and automatically load the configurations when you run `%load_ext sql`. If the file is not found in the current or parent directories, default values will be used. A sample `pyproject.toml` could look like this:
+```{versionchanged} 0.10.3
+Look for `~/.jupysql/config` if `pyproject.toml` doesn't exist.
+```
+
+You can define configurations in a `pyproject.toml` file and automatically load the configurations when you run `%load_ext sql`. If the file is not found in the current or parent directories, jupysql then looks for configurations in `~/.jupysql/config`. If no configuration file is found, default values will be used. A sample configuration file could look like this:
 
 ```
 [tool.jupysql.SqlMagic]
@@ -330,4 +367,4 @@ feedback = true
 autopandas = true
 ```
 
-Note that `pyproject.toml` is only for setting configurations. To store connection details, please use [`connections.ini`](../user-guide/connection-file.md) file.
+Note that these files are only for setting configurations. To store connection details, please use [`connections.ini`](../user-guide/connection-file.md) file.

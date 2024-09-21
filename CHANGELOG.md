@@ -1,16 +1,91 @@
 # CHANGELOG
 
-## 0.10.2dev
+## 0.10.15dev
 
-* [Doc] Fixed typo in the `./doc/integrations/postgres-connect.ipynb` file (Line 180) (#845)
+## 0.10.14 (2024-09-18)
+
+* [Feature] Removes telemetry
+
+## 0.10.13 (2024-09-12)
+
+* [Feature] `ploomber-extension` is no longer a dependency
+
+## 0.10.12 (2024-07-12)
+
+* [Feature] Remove sqlalchemy upper bound ([#1020](https://github.com/ploomber/jupysql/pull/1020))
+
+## 0.10.11 (2024-07-03)
+
+* [Fix] Fix error when connections.ini contains a `query` value as dictionary ([#1015](https://github.com/ploomber/jupysql/issues/1015))
+
+## 0.10.10 (2024-02-07)
+
+* [Feature] Adds `ploomber-extension` as a dependency
+
+## 0.10.9 (2024-01-31)
+
+* [Feature] Add option to disable named parameters; options now changed to: `warn`, `enabled`, and `disabled` - fixes ([#971](https://github.com/ploomber/jupysql/issues/971)) and ([#972](https://github.com/ploomber/jupysql/issues/972))
+* [Fix] Fix error when fuzzy matching configuration file (now we only match config keys) ([#975](https://github.com/ploomber/jupysql/issues/975) by [@maciejb](https://github.com/maciejb))
+* [Fix] Fix error that caused JupySQL to read a config file even when there was no JupySQL config ([#975](https://github.com/ploomber/jupysql/issues/975) by [@maciejb](https://github.com/maciejb))
+
+## 0.10.8 (2024-01-25)
+
+* [Feature] Add support for parametrizing string type arguments of `%%sql`, `%sqlplot`, `%sqlcmd`' ([#699](https://github.com/ploomber/jupysql/issues/699))
+* [Fix] Fix edge case where `select` and other SQL keywords were not properly used to find where the user's query started, causing argument parsing issues ([#973](https://github.com/ploomber/jupysql/issues/973))
+
+## 0.10.7 (2023-12-23)
+
+* [Feature] Add Spark Connection as a dialect for Jupysql ([#965](https://github.com/ploomber/jupysql/issues/965)) (by [@gilandose](https://github.com/gilandose))
+
+## 0.10.6 (2023-12-21)
+
+* [Fix] Fix error when `%sql` includes a query with negative numbers ([#958](https://github.com/ploomber/jupysql/issues/958))
+
+## 0.10.5 (2023-12-11)
+
+* [Fix] Look into `~/.jupysql/config` for config if pyproject.toml does not have a SqlMagic section ([#911](https://github.com/ploomber/jupysql/issues/911))
+* [Fix] Update to be compatible with DuckDB v0.9.0 ([#897](https://github.com/ploomber/jupysql/issues/897)) and Pandas 2.1.0 ([#890](https://github.com/ploomber/jupysql/issues/890))
+* [Fix] Pins `sqlplot<20.0.0`
+
+## 0.10.4 (2023-11-28)
+
+* [Feature] Allow user to specify the schema when saving dataframes using `--persist` ([#945](https://github.com/ploomber/jupysql/issues/945))
+* [Fix] Fix bug causing empty result on SQL with trailing semicolon and comment ([#907](https://github.com/ploomber/jupysql/issues/907))
+* [Fix] Fix bug %sql not parsing JSON arrow operators correctly ([#918](https://github.com/ploomber/jupysql/issues/918))
+* [Fix] Fixed bug that returns empty results when exception is raised from DB driver
+* [Fix] Added guards to check and raise errors when arguments are entered twice in %sql, %sqlcmd and %sqlplot ([#806](https://github.com/ploomber/jupysql/issues/806))
+* [Fix] Fixed bug that returns snippet typo error message when another table is misspelled ([#940](https://github.com/ploomber/jupysql/issues/940))
+* [Doc] Use Oracle Database Free for Oracle Database Quick Start tutorial ([#943](https://github.com/ploomber/jupysql/issues/943))
+
+## 0.10.3 (2023-11-06)
+
+* [Feature] Allow user-level config using ~/.jupysql/config ([#880](https://github.com/ploomber/jupysql/issues/880))
+* [Fix] Remove force deleted snippets from dependent snippet's `with` ([#717](https://github.com/ploomber/jupysql/issues/717))
+* [Fix] Comments added in SQL query to be stripped before saved as snippet ([#886](https://github.com/ploomber/jupysql/issues/886))
+* [Fix] Fixed bug passing :NUMBER while string slicing in query ([#901](https://github.com/ploomber/jupysql/issues/901))
+* [Fix] Fixed bug that showed wrong error when querying snippet with invalid function ([#902](https://github.com/ploomber/jupysql/issues/902))
+* [Fix] Disabled CTE generation when snippets are detected in a non-SELECT type query. ([#651](https://github.com/ploomber/jupysql/issues/651), [#652](https://github.com/ploomber/jupysql/issues/652))
+* [Fix] Fix empty result in certain duckdb `SELECT` and `SUMMARIZE` queries with leading comments ([#892](https://github.com/ploomber/jupysql/issues/892))
+* [Fix] Fix incorrect conversion to Pandas/Polars dataframe for PIVOT statement results and InvalidInputException in PIVOT subqueries ([#917](https://github.com/ploomber/jupysql/issues/917))
+* [Doc] Added `run_statements` to the Python API docs ([#922](https://github.com/ploomber/jupysql/issues/922))
+
+## 0.10.2 (2023-09-22)
+
 * [Feature] Improved messages when loading configurations from `pyproject.toml` file.
-* [Feature] Add `--schema/-s` for `%sqlcmd` commands that support `--table/-t` and ensure `--table schema.table` works (#519)
-* [Feature] Add `schema/-s` for `%sqlplot` and ensure `--table schema.table` works (#854)
-* [Feature] Expose link in feedback when it is shown in a terminal (#846)
-* [Feature] Show feedback when starting a new connection (#807)
+* [Feature] Add `--schema/-s` for `%sqlcmd` commands that support `--table/-t` and ensure `--table schema.table` works ([#519](https://github.com/ploomber/jupysql/issues/519))
+* [Feature] Add `schema/-s` for `%sqlplot` and ensure `--table schema.table` works ([#854](https://github.com/ploomber/jupysql/issues/854))
+* [Feature] Expose link in feedback when it is shown in a terminal ([#846](https://github.com/ploomber/jupysql/issues/846))
+* [Feature] Show feedback when starting a new connection ([#807](https://github.com/ploomber/jupysql/issues/807))
+* [Feature] `jupysql-plugin` is now bundled with `jupysql` by default
+* [Fix] Fix result not displayed when `SUMMARIZE` argument is used in duckdb with a sqlalchemy connection ([#836](https://github.com/ploomber/jupysql/issues/836))
+* [Fix] Show deprecation warnings for legacy plot API ([#513](https://github.com/ploomber/jupysql/issues/513))
+* [Fix] Fix error when trying to access previously non-existing file ([#840](https://github.com/ploomber/jupysql/issues/840))
+* [Fix] Testing with latest DuckDB version ([#498](https://github.com/ploomber/jupysql/issues/498))
+* [Fix] Remove duplicate integration tests ([#827](https://github.com/ploomber/jupysql/issues/827))
+* [Doc] Fixed typo in the `./doc/integrations/postgres-connect.ipynb` file (Line 180) ([#845](https://github.com/ploomber/jupysql/issues/845))
 * [Doc] Add chDB integration tutorial
-* [Doc] Clarify the use of `pyproject.toml` and `connections.ini` in documentations (#850)
-* [Fix] Fix result not displayed when `SUMMARIZE` argument is used in duckdb with a sqlalchemy connection (#836)
+* [Doc] Clarify the use of `pyproject.toml` and `connections.ini` in documentations ([#850](https://github.com/ploomber/jupysql/issues/850))
+* [Doc] Update documentation to use `{{variable}}` instead of `string.Template` and remove `--with` since it's optional ([#838](https://github.com/ploomber/jupysql/issues/838))
 
 ## 0.10.1 (2023-08-30)
 

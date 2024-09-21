@@ -46,7 +46,7 @@ However, you can change this:
 ```
 
 ```{tip}
-For configuration settings other than connections, you can use a [`pyproject.toml`](../api/configuration.md#loading-from-pyprojecttoml) file.
+For configuration settings other than connections, you can use a [`pyproject.toml` or `~/.jupysql/config`](../api/configuration.md#loading-from-a-file) file.
 ```
 
 The `.ini` format defines sections and you can define key-value pairs within each section. For example:
@@ -83,6 +83,19 @@ password = mypass
 host = localhost
 port = 5432
 database = db
+```
+
+Or, to connect to an Oracle database, which might require some query parameters:
+
+```ini
+[ora]
+drivername = oracle+oracledb
+username = myuser
+password = mypass
+host = my_oracle_server.example.com
+port = 1521
+database = my_oracle_pdb.example.com
+query = {"servicename": "my_oracle_db.example.com"}
 ```
 
 ```{code-cell} ipython3

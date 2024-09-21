@@ -2,7 +2,7 @@ import sys
 import argparse
 import shlex
 
-from IPython.core.magic import Magics, line_magic, magics_class
+from IPython.core.magic import Magics, line_magic, magics_class, no_var_expand
 from IPython.core.magic_arguments import argument, magic_arguments
 from sql.inspect import support_only_sql_alchemy_connection
 from sql.cmd.tables import tables
@@ -13,6 +13,7 @@ from sql.cmd.explore import explore
 from sql.cmd.snippets import snippets
 from sql.cmd.connect import connect
 from sql.connection import ConnectionManager
+from sql.util import check_duplicate_arguments
 
 try:
     from traitlets.config.configurable import Configurable
@@ -34,6 +35,7 @@ class CmdParser(argparse.ArgumentParser):
 class SqlCmdMagic(Magics, Configurable):
     """%sqlcmd magic"""
 
+    @no_var_expand
     @line_magic("sqlcmd")
     @magic_arguments()
     @argument("line", type=str, help="Command name")
@@ -74,6 +76,17 @@ class SqlCmdMagic(Magics, Configurable):
             # directly use shlex since SqlCmdMagic does not use magic_args from parse.py
             split = shlex.split(line, posix=False)
             command, others = split[0].strip(), split[1:]
+            if others:
+                check_duplicate_arguments(
+                    self.execute,
+                    "sqlcmd",
+                    split,
+                    disallowed_aliases={
+                        "-t": "--table",
+                        "-s": "--schema",
+                        "-o": "--output",
+                    },
+                )
 
             if command in AVAILABLE_SQLCMD_COMMANDS:
                 if (
@@ -116,5 +129,7 @@ class SqlCmdMagic(Magics, Configurable):
         }
 
         cmd = router.get(cmd_name)
-        if cmd:
+        if cmd_name == "connect":
             return cmd(others)
+        else:
+            return cmd(others, self.shell.user_ns.copy())

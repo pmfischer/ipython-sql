@@ -27,6 +27,7 @@ nb_execution_excludepatterns = [
     "integrations/oracle.ipynb",
     "integrations/snowflake.ipynb",
     "integrations/redshift.ipynb",
+    "integrations/spark.ipynb",
 ]
 nb_execution_in_temp = True
 nb_execution_show_tb = True
@@ -58,7 +59,6 @@ html_theme = "sphinx_book_theme"
 html_theme_options = {
     "launch_buttons": {
         "notebook_interface": "jupyterlab",
-        "binderhub_url": "https://binder.ploomber.io",
         "jupyterhub_url": "",
         "thebe": False,
         "colab_url": "",
@@ -69,8 +69,9 @@ html_theme_options = {
     "analytics": {"google_analytics_id": "G-JBZ8NNQSLN"},
     "home_page_in_toc": True,
     "announcement": (
-        "Host Voilà and Streamlit apps for free with "
-        "<a href='https://www.platform.ploomber.io/register/'>Ploomber Cloud!</a>"
+        "Deploy AI apps for free on  "
+        "<a href='https://ploomber.io/?utm_medium=readthedocs&utm_source=jupysql'>"
+        "Ploomber Cloud!</a>"
     ),
     "use_repository_button": True,
     "use_edit_page_button": False,

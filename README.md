@@ -1,6 +1,6 @@
 # JupySQL
 ![CI](https://github.com/ploomber/jupysql/workflows/CI/badge.svg)
-![CI Integration Tests](https://github.com/ploomber/jupysql/workflows/CI%20-%20DB%20Integration/badge.svg)
+![CI Integration Tests](https://github.com/ploomber/jupysql/actions/workflows/ci-integration-db.yaml/badge.svg)
 ![Broken Links](https://github.com/ploomber/jupysql/workflows/check-for-broken-links/badge.svg)
 [![PyPI version](https://badge.fury.io/py/jupysql.svg)](https://badge.fury.io/py/jupysql)
 [![Twitter](https://img.shields.io/twitter/follow/edublancas?label=Follow&style=social)](https://twitter.com/intent/user?screen_name=ploomber)
@@ -23,11 +23,10 @@
   <a href="https://www.youtube.com/channel/UCaIS5BMlmeNQE4-Gn0xTDXQ">YouTube</a>
 </p>
 
-Run SQL in Jupyter/IPython via a `%sql` and `%%sql` magics.
+> [!TIP]
+> Deploy AI apps for free on [Ploomber Cloud!](https://ploomber.io/?utm_medium=github&utm_source=jupysql)
 
-<p align="center">
-  <a href="https://binder.ploomber.io/v2/gh/ploomber/jupysql/master?urlpath=lab/tree/doc/quick-start.md"> <img src="_static/get-started.svg" alt="Get Started"> </a>
-</p>
+Run SQL in Jupyter/IPython via a `%sql` and `%%sql` magics.
 
 ## Features
 

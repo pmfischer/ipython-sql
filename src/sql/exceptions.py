@@ -10,6 +10,7 @@ IPython.core.error.UsageError doesn't work, so `exception_factory` is a workarou
 to create new errors that are IPython.core.error.UsageError but with a different name.
 
 """
+
 from IPython.core import error
 
 
@@ -47,7 +48,7 @@ NotImplementedError = exception_factory("NotImplementedError")
 # raised internally when the user chooses a table that doesn't exist
 TableNotFoundError = exception_factory("TableNotFoundError")
 
-# raise it when there is an error in parsing pyproject.toml file
+# raise it when there is an error in parsing the configuration file
 ConfigurationError = exception_factory("ConfigurationError")
 
 

@@ -6,6 +6,8 @@ from string import Formatter
 from uuid import uuid4
 from elasticsearch import Elasticsearch
 
+import sqlparse
+
 try:
     from ipywidgets import interact
 except ModuleNotFoundError:
@@ -28,6 +30,7 @@ from sqlalchemy.exc import (
 )
 from traitlets.config.configurable import Configurable
 from traitlets import Bool, Int, TraitError, Unicode, Dict, observe, validate
+from sql.traits import Parameters
 
 import warnings
 import shlex
@@ -42,7 +45,6 @@ from sql.magic_plot import SqlPlotMagic
 from sql.magic_cmd import SqlCmdMagic
 from sql._patch import patch_ipython_usage_error
 from sql import util
-from sql.util import pretty_print
 from sql.error_handler import handle_exception
 from sql._current import _set_sql_magic
 
@@ -56,10 +58,11 @@ except ModuleNotFoundError:
     DataFrame = None
     Series = None
 
-from sql.telemetry import telemetry
-
 
 SUPPORT_INTERACTIVE_WIDGETS = ["Checkbox", "Text", "IntSlider", ""]
+IF_NOT_SELECT_MESSAGE = "The query is not a SELECT type query and as \
+snippets only work with SELECT queries,"
+IF_SELECT_MESSAGE = "JupySQL does not support snippet expansion within CTEs yet,"
 
 
 @magics_class
@@ -80,7 +83,6 @@ class RenderMagic(Magics):
         action="append",
         dest="with_",
     )
-    @telemetry.log_call("sqlrender")
     def sqlrender(self, line):
         args = parse_argstring(self.sqlrender, line)
         warnings.warn(
@@ -146,8 +148,17 @@ class SqlMagic(Magics, Configurable):
         config=True,
         help="Verbosity level. 0=minimal, 1=normal, 2=all",
     )
-    named_parameters = Bool(
+    lazy_execution = Bool(
         default_value=False,
+        config=True,
+        help="Whether to evaluate using ResultSet which will "
+        "cause the plan to execute or just return a lazily "
+        "executed plan allowing validating schemas, "
+        "without expensive compute."
+        "Currently only supported for Spark Connection.",
+    )
+    named_parameters = Parameters(
+        default_value="warn",
         config=True,
         help=(
             "Allow named parameters in queries "
@@ -177,7 +188,6 @@ class SqlMagic(Magics, Configurable):
         ),
     )
 
-    @telemetry.log_call("init")
     def __init__(self, shell):
         self._store = store
 
@@ -369,14 +379,15 @@ class SqlMagic(Magics, Configurable):
             line=line, cell=cell, local_ns=local_ns, is_interactive_mode=False
         )
 
-    @telemetry.log_call("execute", payload=True)
     @modify_exceptions
-    def _execute(self, payload, line, cell, local_ns, is_interactive_mode=False):
+    def _execute(self, line, cell, local_ns, is_interactive_mode=False):
         """
         This function implements the cell logic; we create this private
         method so we can control how the function is called. Otherwise,
         decorating ``SqlMagic.execute`` will break when adding the ``@log_call``
         decorator with ``payload=True``
+
+        NOTE: telemetry has been removed, we can remove this function
         """
 
         def interactive_execute_wrapper(**kwargs):
@@ -408,6 +419,9 @@ class SqlMagic(Magics, Configurable):
 
         args = command.args
 
+        if util.is_rendering_required(line):
+            util.expand_args(args, user_ns)
+
         if args.section and args.alias:
             raise exceptions.UsageError(
                 "Cannot use --section with --alias since the section name "
@@ -423,18 +437,42 @@ class SqlMagic(Magics, Configurable):
             else:
                 with_ = self._store.infer_dependencies(command.sql_original, args.save)
                 if with_:
-                    command.set_sql_with(with_)
-                    display.message(
-                        f"Generating CTE with stored snippets: {pretty_print(with_)}"
-                    )
+                    query_type = get_query_type(command.sql_original)
+
+                    if query_type != "SELECT":
+                        display.message_warning(
+                            f"Your query is using the following snippets: \
+{', '.join(with_)}. {IF_NOT_SELECT_MESSAGE} CTE generation is disabled"
+                        )
+                    else:
+                        command.set_sql_with(with_)
+                        display.message(
+                            f"Generating CTE with stored snippets: \
+{util.pretty_print(with_)}"
+                        )
                 else:
                     with_ = None
         else:
+            query_type = get_query_type(command.sql_original)
             if args.with_:
                 raise exceptions.UsageError(
                     "Cannot use --with with CTEs, remove --with and re-run the cell"
                 )
 
+            dependencies = self._store.infer_dependencies(
+                command.sql_original, args.save
+            )
+
+            if dependencies:
+                if query_type != "SELECT":
+                    display_message = IF_NOT_SELECT_MESSAGE
+                else:
+                    display_message = IF_SELECT_MESSAGE
+                display.message_warning(
+                    f"Your query is using one or more of the following snippets: \
+{', '.join(dependencies)}. {display_message}\
+ CTE generation is disabled"
+                )
             with_ = None
 
         # Create the interactive slider
@@ -449,6 +487,7 @@ class SqlMagic(Magics, Configurable):
             )
             interact(interactive_execute_wrapper, **interactive_dict)
             return
+
         if args.connections:
             return sql.connection.ConnectionManager.connections_table()
         elif args.close:
@@ -489,7 +528,6 @@ class SqlMagic(Magics, Configurable):
             alias=args.section if args.section else args.alias,
             config=self,
         )
-        payload["connection_info"] = conn._get_database_information()
 
         if args.persist_replace and args.append:
             raise exceptions.UsageError(
@@ -543,14 +581,15 @@ class SqlMagic(Magics, Configurable):
             display.message("Skipping execution...")
             return
 
+        parameters = None
+        if self.named_parameters == "disabled":
+            parameters = {}
+        elif self.named_parameters == "enabled":
+            parameters = user_ns
+
         try:
             self._store_log.append(command.sql) # Record invocations, even if not successful
-            result = run_statements(
-                conn,
-                command.sql,
-                self,
-                parameters=user_ns if self.named_parameters else None,
-            )
+            result = run_statements(conn, command.sql, self, parameters=parameters)
 
             if self._log is not None:
                 doc = {
@@ -640,6 +679,14 @@ class SqlMagic(Magics, Configurable):
 
         frame_name = raw.strip(";")
 
+        # user may pass schema.dataframe (required for certain DBs
+        # like Trino)
+        schema_name = None
+        if "." in frame_name:
+            schema_frame = frame_name.split(".")
+            schema_name = schema_frame[0]
+            frame_name = schema_frame[1]
+
         # invalid identifier
         if not frame_name.isidentifier():
             raise exceptions.UsageError(
@@ -678,59 +725,88 @@ class SqlMagic(Magics, Configurable):
             if_exists = "fail"
 
         conn.to_table(
-            table_name=table_name, data_frame=frame, if_exists=if_exists, index=index
+            table_name=table_name,
+            data_frame=frame,
+            if_exists=if_exists,
+            index=index,
+            schema=schema_name,
         )
 
 
-def set_configs(ip, file_path):
+def get_query_type(command: str):
+    """
+    Returns the query type of the original sql command
+    """
+    parsed = sqlparse.parse(command)
+    query_type = parsed[0].get_type() if parsed else None
+    if query_type == "UNKNOWN":
+        return None
+    return query_type
+
+
+def set_configs(ip, file_path, alternate_path):
     """Set user defined SqlMagic configuration settings"""
     sql = ip.find_cell_magic("sql").__self__
-    user_configs = util.get_user_configs(file_path)
+    user_configs, loaded_from = util.get_user_configs(file_path, alternate_path)
     default_configs = util.get_default_configs(sql)
     table_rows = []
-    for config, value in user_configs.items():
-        if config in default_configs.keys():
-            default_type = type(default_configs[config])
-            if isinstance(value, default_type):
-                setattr(sql, config, value)
-                table_rows.append([config, value])
+
+    success = False
+    if user_configs:
+        for config, value in user_configs.items():
+            if config in default_configs.keys():
+                default_type = type(default_configs[config])
+                if isinstance(value, default_type):
+                    setattr(sql, config, value)
+                    table_rows.append([config, value])
+                    success = True
+                else:
+                    display.message(
+                        f"'{value}' is an invalid value for '{config}'. "
+                        f"Please use {default_type.__name__} value instead."
+                    )
             else:
-                display.message(
-                    f"'{value}' is an invalid value for '{config}'. "
-                    f"Please use {default_type.__name__} value instead."
-                )
-        else:
-            util.find_close_match_config(config, default_configs.keys())
+                util.find_close_match_config(config, default_configs.keys())
+        if success:
+            if loaded_from is not None:
+                display.message(f"Loading configurations from {loaded_from}.")
+            else:
+                display.message("Loading default configurations.")
 
     return table_rows
 
 
 def load_SqlMagic_configs(ip):
-    """Loads saved SqlMagic configs in pyproject.toml"""
-    file_path = util.find_path_from_root("pyproject.toml")
-    if file_path:
-        try:
-            table_rows = set_configs(ip, file_path)
-        except Exception as e:
-            if type(e).__name__ == "TomlDecodeError":
-                display.message_warning(
-                    f"Could not load configuration file at {file_path} "
-                    "(default configuration will be used).\nPlease "
-                    f"check that it is valid TOML: {e}"
-                )
-                return
-            if type(e).__name__ == "ModuleNotFoundError":
-                display.message(
-                    "The 'toml' package isn't installed. To load settings from "
-                    "the pyproject.toml file, install with: pip install toml"
-                )
-                return
-            else:
-                raise
+    """Loads saved SqlMagic configs in pyproject.toml or ~/.jupysql/config"""
 
-        if table_rows:
-            display.message("Settings changed:")
-            display.table(["Config", "value"], table_rows)
+    file_path = util.find_path_from_root("pyproject.toml")
+    alternate_path = Path("~/.jupysql/config").expanduser()
+
+    table_rows = []
+    try:
+        table_rows = set_configs(ip, file_path, alternate_path)
+    except Exception as e:
+        if type(e).__name__ == "TomlDecodeError":
+            display.message_warning(
+                f"Could not load configuration file at {file_path}"
+                f"{(' or ' + str(alternate_path)) if alternate_path else ''}"
+                " (default configuration will be used).\nPlease "
+                f"check that it is valid TOML: {e}"
+            )
+            return
+        if type(e).__name__ == "ModuleNotFoundError":
+            display.message(
+                "The 'toml' package isn't installed. To load settings from "
+                "pyproject.toml or ~/.jupysql/config, install with: "
+                "pip install toml"
+            )
+            return
+        else:
+            raise
+
+    if table_rows:
+        display.message("Settings changed:")
+        display.table(["Config", "value"], table_rows)
 
 
 def load_ipython_extension(ip):

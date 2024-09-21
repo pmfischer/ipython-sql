@@ -11,11 +11,11 @@ extensions = ["md", "rst", "py", "ipynb"]
 ignore_substrings = [
     "d37ci6vzurychx.cloudfront.net",
     "https://bornsql.ca",
-    "binder.ploomber.io",
     "127.0.0.1",
     "http://localhost",
     "https://localhost",
     "platform.ploomber.io",
+    "https://ourworldindata.org",
 ]
 
 [tool.nbqa.addopts]

@@ -35,6 +35,8 @@ INTEGRATION_PIP_DEPENDENCIES = [
     "pyodbc==4.0.34",
     "sqlalchemy-pytds",
     "python-tds",
+    "pyspark>=3.4.1",
+    "grpcio-status",
 ]
 
 
@@ -125,6 +127,9 @@ def test_integration_cloud(session):
     Run integration tests on cloud databases (currently snowflake and redshift)
     (NOTE: the sqlalchemy-snowflake and sqlalchemy-redshift driver only work with
     SQLAlchemy 1.x)
+    This is disabled currently, refer: https://github.com/ploomber/jupysql/issues/984
+    If it is required to enable these tests add a job in
+    .github/workflows/ci.yaml file.
     """
 
     # TODO: do not require integration test dependencies if only running snowflake

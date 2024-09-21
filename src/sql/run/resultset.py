@@ -5,14 +5,15 @@ from io import StringIO
 from html import unescape
 from collections.abc import Iterable
 
-
 import prettytable
+import warnings
 
 from sql.column_guesser import ColumnGuesserMixin
 from sql.run.csv import CSVWriter, CSVResultDescriptor
-from sql.telemetry import telemetry
 from sql.run.table import CustomPrettyTable
 from sql._current import _config_feedback_all
+
+from sql.exceptions import RuntimeError
 
 
 class ResultSet(ColumnGuesserMixin):
@@ -244,15 +245,12 @@ class ResultSet(ColumnGuesserMixin):
         for row in self:
             yield dict(zip(self.keys, row))
 
-    @telemetry.log_call("data-frame", payload=True)
-    def DataFrame(self, payload):
+    def DataFrame(self):
         """Returns a Pandas DataFrame instance built from the result set."""
-        payload["connection_info"] = self._conn._get_database_information()
         import pandas as pd
 
         return _convert_to_data_frame(self, "df", pd.DataFrame)
 
-    @telemetry.log_call("polars-data-frame")
     def PolarsDataFrame(self, **polars_dataframe_kwargs):
         """Returns a Polars DataFrame instance built from the result set."""
         import polars as pl
@@ -260,7 +258,6 @@ class ResultSet(ColumnGuesserMixin):
         polars_dataframe_kwargs["schema"] = self.keys
         return _convert_to_data_frame(self, "pl", pl.DataFrame, polars_dataframe_kwargs)
 
-    @telemetry.log_call("pie")
     def pie(self, key_word_sep=" ", title=None, **kwargs):
         """Generates a pylab pie chart from the result set.
 
@@ -282,6 +279,15 @@ class ResultSet(ColumnGuesserMixin):
         Any additional keyword arguments will be passed
         through to ``matplotlib.pylab.pie``.
         """
+        warnings.warn(
+            (
+                ".pie() is deprecated and will be removed in a future version. "
+                "Use %sqlplot pie instead. "
+                "For more help, find us at https://ploomber.io/community "
+            ),
+            UserWarning,
+        )
+
         self.guess_pie_columns(xlabel_sep=key_word_sep)
         import matplotlib.pylab as plt
 
@@ -291,7 +297,6 @@ class ResultSet(ColumnGuesserMixin):
         ax.set_title(title or self.ys[0].name)
         return ax
 
-    @telemetry.log_call("plot")
     def plot(self, title=None, **kwargs):
         """Generates a pylab plot from the result set.
 
@@ -310,6 +315,14 @@ class ResultSet(ColumnGuesserMixin):
         Any additional keyword arguments will be passed
         through to ``matplotlib.pylab.plot``.
         """
+        warnings.warn(
+            (
+                ".plot() is deprecated and will be removed in a future version. "
+                "For more help, find us at https://ploomber.io/community "
+            ),
+            UserWarning,
+        )
+
         import matplotlib.pylab as plt
 
         self.guess_plot_columns()
@@ -330,7 +343,6 @@ class ResultSet(ColumnGuesserMixin):
 
         return ax
 
-    @telemetry.log_call("bar")
     def bar(self, key_word_sep=" ", title=None, **kwargs):
         """Generates a pylab bar plot from the result set.
 
@@ -351,6 +363,15 @@ class ResultSet(ColumnGuesserMixin):
         Any additional keyword arguments will be passed
         through to ``matplotlib.pylab.bar``.
         """
+        warnings.warn(
+            (
+                ".bar() is deprecated and will be removed in a future version. "
+                "Use %sqlplot bar instead. "
+                "For more help, find us at https://ploomber.io/community "
+            ),
+            UserWarning,
+        )
+
         import matplotlib.pylab as plt
 
         ax = plt.gca()
@@ -365,7 +386,6 @@ class ResultSet(ColumnGuesserMixin):
         ax.set_ylabel(self.ys[0].name)
         return ax
 
-    @telemetry.log_call("generate-csv")
     def csv(self, filename=None, **format_params):
         """Generate results in comma-separated form.  Write to ``filename`` if given.
         Any other parameters will be passed on to csv.writer."""
@@ -394,10 +414,22 @@ class ResultSet(ColumnGuesserMixin):
             # psycopg2 raises psycopg2.ProgrammingError error when running a script
             # that doesn't return rows e.g, 'CREATE TABLE' but others don't
             # (e.g., duckdb), so here we catch all
-            except Exception:
+            except Exception as e:
+                if not any(
+                    substring in str(e)
+                    for substring in [
+                        "This result object does not return rows",
+                        "no results to fetch",
+                    ]
+                ):
+                    # raise specific DB driver errors
+                    raise RuntimeError(f"Error running the query: {str(e)}") from e
                 self.mark_fetching_as_done()
                 return
-
+            # spark doesn't support cursor
+            if hasattr(self._sqlaproxy, "dataframe"):
+                self._results = []
+                self._pretty_table.clear()
             self._extend_results(returned)
 
             if len(returned) < size:
@@ -421,6 +453,9 @@ class ResultSet(ColumnGuesserMixin):
 
     def fetchall(self):
         if not self._done_fetching():
+            if hasattr(self._sqlaproxy, "dataframe"):
+                self._results = []
+                self._pretty_table.clear()
             self._extend_results(self.sqlaproxy.fetchall())
             self.mark_fetching_as_done()
 
@@ -463,6 +498,8 @@ def _convert_to_data_frame(
     # maybe create accessors in the connection objects?
     if result_set._conn.is_dbapi_connection:
         native_connection = result_set.sqlaproxy
+    elif hasattr(result_set.sqlaproxy, "dataframe"):
+        return result_set.sqlaproxy.dataframe.toPandas()
     else:
         native_connection = result_set._conn._connection.connection
 
@@ -473,10 +510,18 @@ def _convert_to_data_frame(
         # we need to re-execute the statement because if we fetched some rows
         # already, .df() will return None. But only if it's a select statement
         # otherwise we might end up re-execute INSERT INTO or CREATE TABLE
-        # statements
+        # statements.
         is_select = _statement_is_select(result_set._statement)
 
         if is_select:
+            # If command includes PIVOT, current transaction must be closed.
+            # Otherwise, re-executing the statement will return
+            # TransactionContext Error: cannot start a transaction within a transaction
+            if "pivot" in result_set._statement.lower():
+                # fetchall retrieves the previous results and completes the transaction
+                # nothing is done with the results from fetchall()
+                native_connection.fetchall()
+
             native_connection.execute(result_set._statement)
 
         return getattr(native_connection, converter_name)()
@@ -510,4 +555,5 @@ def _statement_is_select(statement):
         statement_.startswith("select")
         or statement_.startswith("from")
         or statement_.startswith("with")
+        or statement_.startswith("pivot")
     )

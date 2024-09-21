@@ -444,6 +444,7 @@ def test_bar_one_col_h(load_data_one_col, ip):
     ip.run_cell("%sqlplot bar -t data_one.csv -c x -o h")
 
 
+@pytest.mark.xfail(reason="DuckDB v0.9.0 bug")
 @_cleanup_cm()
 @image_comparison(
     baseline_images=["bar_one_col_num_h"], extensions=["png"], remove_text=True
@@ -452,6 +453,7 @@ def test_bar_one_col_num_h(load_data_one_col, ip):
     ip.run_cell("%sqlplot bar -t data_one.csv -c x -o h -S")
 
 
+@pytest.mark.xfail(reason="DuckDB v0.9.0 bug")
 @_cleanup_cm()
 @image_comparison(
     baseline_images=["bar_one_col_num_v"], extensions=["png"], remove_text=True
@@ -467,11 +469,13 @@ def test_bar_two_col(load_data_two_col, ip):
 
 
 @_cleanup_cm()
+@pytest.mark.xfail(reason="Failing intermittently with DuckDB v0.10.0")
 @image_comparison(baseline_images=["pie_one_col"], extensions=["png"], remove_text=True)
 def test_pie_one_col(load_data_one_col, ip):
     ip.run_cell("%sqlplot pie -t data_one.csv -c x")
 
 
+@pytest.mark.xfail(reason="Failing intermittently with DuckDB v0.10.0")
 @_cleanup_cm()
 @image_comparison(
     baseline_images=["pie_one_col_null"], extensions=["png"], remove_text=True
@@ -480,6 +484,7 @@ def test_pie_one_col_null(load_data_one_col_null, ip):
     ip.run_cell("%sqlplot pie -t data_one_null.csv -c x")
 
 
+@pytest.mark.xfail(reason="Failing intermittently with DuckDB v0.10.0")
 @_cleanup_cm()
 @image_comparison(
     baseline_images=["pie_one_col_num"], extensions=["png"], remove_text=True
@@ -488,6 +493,7 @@ def test_pie_one_col_num(load_data_one_col, ip):
     ip.run_cell("%sqlplot pie -t data_one.csv -c x -S")
 
 
+@pytest.mark.xfail(reason="Failing intermittently with DuckDB v0.10.0")
 @_cleanup_cm()
 @image_comparison(baseline_images=["pie_two_col"], extensions=["png"], remove_text=True)
 def test_pie_two_col(load_data_two_col, ip):
@@ -685,6 +691,7 @@ def test_histogram_with_table_in_schema(ip_with_schema_and_table, cmd, conn):
     ip_with_schema_and_table.run_cell(cmd)
 
 
+@pytest.mark.xfail(reason="DuckDB v0.9.0 bug")
 @pytest.mark.parametrize(
     "cmd, conn",
     [
@@ -716,6 +723,7 @@ def test_bar_with_table_in_schema(ip_with_schema_and_table, cmd, conn):
     ip_with_schema_and_table.run_cell(cmd)
 
 
+@pytest.mark.xfail(reason="DuckDB v0.9.0 bug")
 @pytest.mark.parametrize(
     "cmd, conn",
     [
@@ -794,3 +802,241 @@ def test_sqlplot_missing_table(ip_snippets, capsys):
         ip_snippets.run_cell("%sqlplot boxplot --table missing --column x")
 
     assert MISSING_TABLE_ERROR_MSG.strip() in str(excinfo.value).strip()
+
+
+@_cleanup_cm()
+@pytest.mark.parametrize(
+    "cell",
+    [
+        "%sqlplot boxplot --table {{table}} --column body_mass_g",
+        "%sqlplot boxplot --table penguins.csv --column {{column}}",
+        "%sqlplot boxplot --table {{table}} --column {{column}}",
+    ],
+    ids=["table", "column", "table-column"],
+)
+@image_comparison(baseline_images=["boxplot"], extensions=["png"], remove_text=True)
+def test_boxplot_with_variable_substitution(load_penguin, ip, cell):
+    ip.user_global_ns["table"] = "penguins.csv"
+    ip.user_global_ns["column"] = "body_mass_g"
+    ip.run_cell(cell)
+
+
+@_cleanup_cm()
+@pytest.mark.parametrize(
+    "cell",
+    [
+        "%sqlplot histogram --table {{table}} --column body_mass_g",
+        "%sqlplot histogram --table penguins.csv --column {{column}}",
+        "%sqlplot histogram --table {{table}} --column {{column}}",
+    ],
+    ids=["table", "column", "table-column"],
+)
+@image_comparison(baseline_images=["hist"], extensions=["png"], remove_text=True)
+def test_hist_with_variable_substitution(load_penguin, ip, cell):
+    ip.user_global_ns["table"] = "penguins.csv"
+    ip.user_global_ns["column"] = "body_mass_g"
+    ip.run_cell(cell)
+
+
+@_cleanup_cm()
+@pytest.mark.parametrize(
+    "cell",
+    [
+        "%sqlplot bar --table {{table}} --column x",
+        "%sqlplot bar --table data_one.csv --column {{column}}",
+        "%sqlplot bar --table {{table}} --column {{column}}",
+    ],
+    ids=["table", "column", "table-column"],
+)
+@image_comparison(baseline_images=["bar_one_col"], extensions=["png"], remove_text=True)
+def test_bar_with_variable_substitution(load_data_one_col, ip, cell):
+    ip.user_global_ns["table"] = "data_one.csv"
+    ip.user_global_ns["column"] = "x"
+    ip.run_cell(cell)
+
+
+@pytest.mark.xfail(reason="Failing intermittently with DuckDB v0.10.0")
+@_cleanup_cm()
+@pytest.mark.parametrize(
+    "cell",
+    [
+        "%sqlplot pie --table {{table}} --column x",
+        "%sqlplot pie --table data_one.csv --column {{column}}",
+        "%sqlplot pie --table {{table}} --column {{column}}",
+    ],
+    ids=["table", "column", "table-column"],
+)
+@image_comparison(baseline_images=["pie_one_col"], extensions=["png"], remove_text=True)
+def test_pie_with_variable_substitution(load_data_one_col, ip, cell):
+    ip.user_global_ns["table"] = "data_one.csv"
+    ip.user_global_ns["column"] = "x"
+    ip.run_cell(cell)
+
+
+@_cleanup_cm()
+@pytest.mark.parametrize(
+    "cell",
+    [
+        "%sqlplot histogram --table {{table}} --column {{column}}",
+        "%sqlplot hist --table {{table}} --column {{column}}",
+        "%sqlplot boxplot --table {{table}} --column {{column}}",
+        "%sqlplot box --table {{table}} --column {{column}}",
+        "%sqlplot boxplot --table {{table}} --column {{column}} --orient {{orient}}",
+        "%sqlplot boxplot --table {{subset_table}} --column {{column}}",
+        "%sqlplot boxplot --table {{subset_table}} --column "
+        "{{column}} --with {{subset_table}}",
+        "%sqlplot boxplot -t {{subset_table}} -c {{column}} -w {{subset_table}} -o h",
+        "%sqlplot boxplot --table {{nas_table}} --column {{column}}",
+        "%sqlplot bar -t {{table}} -c {{column}}",
+        "%sqlplot bar --table {{subset_table}} --column {{column}}",
+        "%sqlplot bar --table {{subset_table}} --column {{column}} "
+        "--with {{subset_table}}",
+        "%sqlplot bar -t {{table}} -c {{column}} -S",
+        "%sqlplot bar -t {{table}} -c {{column}} -o h",
+        "%sqlplot bar -t {{table}} -c {{column}} y",
+        "%sqlplot pie -t {{table}} -c {{column}}",
+        "%sqlplot pie --table {{subset_table}} --column {{column}}",
+        "%sqlplot pie --table {{subset_table}} --column {{column}} "
+        "--with {{subset_table}}",
+        "%sqlplot pie -t {{table}} -c {{column}} -S",
+        "%sqlplot pie -t {{table}} -c {{column}} y",
+        '%sqlplot boxplot --table {{spaces_table}} --column "some column"',
+        '%sqlplot histogram --table {{spaces_table}} --column "some column"',
+        '%sqlplot bar --table {{spaces_table}} --column "some column"',
+        '%sqlplot pie --table {{spaces_table}} --column "some column"',
+    ],
+    ids=[
+        "histogram",
+        "hist",
+        "boxplot",
+        "boxplot-with",
+        "box",
+        "boxplot-horizontal",
+        "boxplot-with",
+        "boxplot-shortcuts",
+        "boxplot-nas",
+        "bar-1-col",
+        "bar-subset",
+        "bar-subset-with",
+        "bar-1-col-show_num",
+        "bar-1-col-horizontal",
+        "bar-2-col",
+        "pie-1-col",
+        "pie-subset",
+        "pie-subset-with",
+        "pie-1-col-show_num",
+        "pie-2-col",
+        "boxplot-column-name-with-spaces",
+        "histogram-column-name-with-spaces",
+        "bar-column-name-with-spaces",
+        "pie-column-name-with-spaces",
+    ],
+)
+def test_sqlplot_with_variable_substitution(tmp_empty, ip, cell):
+    # clean current Axes
+    ip.user_global_ns["table"] = "data.csv"
+    ip.user_global_ns["column"] = "x"
+    ip.user_global_ns["subset_table"] = "subset"
+    ip.user_global_ns["nas_table"] = "nas.csv"
+    ip.user_global_ns["spaces_table"] = "spaces.csv"
+    ip.user_global_ns["file_spaces"] = "file with spaces.csv"
+    ip.user_global_ns["orient"] = "h"
+    plt.cla()
+
+    Path("spaces.csv").write_text(
+        """\
+"some column", y
+0, 0
+1, 1
+2, 2
+"""
+    )
+
+    Path("data.csv").write_text(
+        """\
+x, y
+0, 0
+1, 1
+2, 2
+"""
+    )
+
+    Path("nas.csv").write_text(
+        """\
+x, y
+, 0
+1, 1
+2, 2
+"""
+    )
+
+    Path("file with spaces.csv").write_text(
+        """\
+x, y
+0, 0
+1, 1
+2, 2
+"""
+    )
+    ip.run_cell("%sql duckdb://")
+
+    ip.run_cell(
+        """%%sql --save subset --no-execute
+SELECT *
+FROM data.csv
+WHERE x > -1
+"""
+    )
+
+    out = ip.run_cell(cell)
+
+    # maptlotlib >= 3.7 has Axes but earlier Python
+    # versions are not compatible
+    assert type(out.result).__name__ in {"Axes", "AxesSubplot"}
+
+
+@pytest.mark.parametrize(
+    "cell",
+    [
+        "%sqlplot histogram --table {{schema}}.{{table}} " "--column {{column}}",
+        "%sqlplot histogram --table {{table}} --schema {{schema}} "
+        "--column {{column}}",
+    ],
+)
+@_cleanup_cm()
+@image_comparison(
+    baseline_images=["histogram_with_table_in_schema"],
+    extensions=["png"],
+    remove_text=True,
+)
+def test_histogram_with_table_in_schema_variable_substitution(
+    ip_with_schema_and_table, cell
+):
+    ip_with_schema_and_table.user_global_ns["table"] = "penguins1"
+    ip_with_schema_and_table.user_global_ns["column"] = "body_mass_g"
+    ip_with_schema_and_table.user_global_ns["schema"] = "sqlalchemy_schema"
+    ip_with_schema_and_table.run_cell("%sql duckdb://")
+    ip_with_schema_and_table.run_cell(cell)
+
+
+@pytest.mark.parametrize(
+    "cell",
+    [
+        "%sqlplot boxplot --table {{schema}}.{{table}} --column {{column}}",
+        "%sqlplot boxplot --table {{table}} --schema {{schema}} " "--column {{column}}",
+    ],
+)
+@_cleanup_cm()
+@image_comparison(
+    baseline_images=["boxplot_with_table_in_schema"],
+    extensions=["png"],
+    remove_text=True,
+)
+def test_boxplot_with_table_in_schema_variable_substitution(
+    ip_with_schema_and_table, cell
+):
+    ip_with_schema_and_table.user_global_ns["table"] = "penguins1"
+    ip_with_schema_and_table.user_global_ns["column"] = "body_mass_g"
+    ip_with_schema_and_table.user_global_ns["schema"] = "sqlalchemy_schema"
+    ip_with_schema_and_table.run_cell("%sql duckdb://")
+    ip_with_schema_and_table.run_cell(cell)

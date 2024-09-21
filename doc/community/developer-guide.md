@@ -237,7 +237,7 @@ print("all: ", results.fetchall())
 Functions that expect a `conn` (sometimes named `con`) input variable should assume the input argument is a connection objects (either `SQLAlchemyConnection` or `DBAPIConnection`):
 
 ```python
-def histogram(payload, table, column, bins, with_=None, conn=None):
+def histogram(table, column, bins, with_=None, conn=None):
     pass
 ```
 
@@ -473,10 +473,65 @@ To see the databases available, check out [`src/tests/integration/conftest.py`](
 
 ### Integration tests with cloud databases
 
-We run integration tests against cloud databases like Snowflake, which requires using pre-registered accounts to evaluate their behavior. To initiate these tests, please create a branch in our [ploomber/jupyter repository](https://github.com/ploomber/jupysql).
+Currently, we do not run integration tests against cloud databases like Snowflake and Amazon Redshift.
 
-Please note that if you submit a pull request from a forked repository, the integration testing phase will be skipped because the pre-registered accounts won't be accessible.
+To run Snowflake integration tests locally first set your Snowflake account's username and password:
 
+```bash
+export SF_USERNAME="username"
+export SF_PASSWORD="password"
+```
+
+Then run the pytest command:
+
+```bash
+pytest src/tests/integration -k snowflake
+```
+
+Similarly, for Redshift, set the following environment variables:
+
+```bash
+export REDSHIFT_USERNAME="username"
+export REDSHIFT_PASSWORD="password"
+export REDSHIFT_HOST="host"
+```
+
+Then run the below command:
+
+```bash
+pytest src/tests/integration -k redshift
+```
+
+#### Using Snowflake
+
+While testing manually with Snowflake, you may run into the below error:
+
+```
+No active warehouse selected in the current session. Select an active warehouse with the 'use warehouse' command.
+```
+
+This occurs when you have connected with a registered account but have no current warehouses. If you have permission to create one, open a worksheet and run:
+
+```sql
+CREATE WAREHOUSE <wh_name> WITH WAREHOUSE_SIZE = <wh_size>
+```
+
+If you need permissions, have the admin run: 
+
+```sql
+CREATE ROLE create_wh_role;
+GRANT ROLE create_wh_role TO USER <your_username>;
+GRANT CREATE WAREHOUSE ON ACCOUNT TO ROLE create_wh_role;
+```
+
+Now, open your own worksheet and run:
+
+```sql
+USE ROLE create_wh_role;
+CREATE WAREHOUSE <wh_name> WITH WAREHOUSE_SIZE = <wh_size>
+```
+
+Now, initiate a connection using your new warehouse and run your tests/queries.
 +++
 
 ## SQL transpilation

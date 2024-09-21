@@ -29,6 +29,11 @@ def _snippet_typo_error_message(query):
             suggestions = util.find_close_match(table, get_all_keys())
             err_message = f"There is no table with name {table!r}."
             if len(suggestions) > 0:
+                # If snippet is found in suggestions, this snippet
+                # must not be misspelled (a different table name is)
+                # so we don't show this message.
+                if table in suggestions:
+                    continue
                 suggestions_message = util.get_suggestions_message(suggestions)
                 return f"{err_message}{suggestions_message}"
     return ""
@@ -45,9 +50,14 @@ def _detailed_message_with_error_type(error, query):
         "error in your sql syntax",
         "incorrect syntax",
         "invalid sql",
+        "syntax_error",
     ]
     not_found_substrings = [
-        "does not exist",
+        r"(\btable with name\b).+(\bdoes not exist\b)",
+        r"(\btable\b).+(\bdoes not exist\b)",
+        r"(\bobject\b).+(\bdoes not exist\b)",
+        r"(\brelation\b).+(\bdoes not exist\b)",
+        r"(\btable\b).+(\bdoesn't exist\b)",
         "not found",
         "could not find",
         "no such table",
@@ -63,7 +73,10 @@ def _detailed_message_with_error_type(error, query):
                 TableNotFoundError,
             )
         else:
-            return f"{CTE_MSG}\n\n{ORIGINAL_ERROR}{original_error}\n", RuntimeError
+            return (
+                f"{CTE_MSG}\n\n{ORIGINAL_ERROR}{original_error}\n",
+                RuntimeError,
+            )
     elif "fe_sendauth: no password supplied" in original_error:
         return f"{POSTGRES_MSG}\n{ORIGINAL_ERROR}{original_error}\n", RuntimeError
     return None, None

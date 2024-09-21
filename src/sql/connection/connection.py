@@ -14,7 +14,11 @@ from sqlalchemy.exc import (
     StatementError,
     PendingRollbackError,
     InternalError,
+    ProgrammingError,
 )
+
+from sql.run.sparkdataframe import handle_spark_dataframe
+
 from IPython.core.error import UsageError
 import sqlglot
 import sqlparse
@@ -22,7 +26,6 @@ from ploomber_core.exceptions import modify_exceptions
 
 
 from sql.store import store
-from sql.telemetry import telemetry
 from sql import exceptions, display
 from sql.error_handler import handle_exception
 from sql.parse import (
@@ -256,6 +259,10 @@ class ConnectionManager:
                 )
             elif is_pep249_compliant(descriptor):
                 cls.current = DBAPIConnection(descriptor, config=config, alias=alias)
+            elif is_spark(descriptor):
+                cls.current = SparkConnectConnection(
+                    descriptor, config=config, alias=alias
+                )
             else:
                 existing = rough_dict_get(cls.connections, descriptor)
                 if existing and existing.alias == alias:
@@ -491,7 +498,7 @@ class AbstractConnection(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def to_table(self, table_name, data_frame, if_exists, index):
+    def to_table(self, table_name, data_frame, if_exists, index, schema=None):
         """Create a table from a pandas DataFrame"""
         pass
 
@@ -715,35 +722,21 @@ class SQLAlchemyConnection(AbstractConnection):
         parameters : dict, default None
             Parameters to use in the query (:variable format)
         """
-        parameters = parameters or {}
-
         # we do not support multiple statements
         if len(sqlparse.split(query)) > 1:
             raise NotImplementedError("Only one statement is supported.")
-
-        words = query.split()
-
-        if words:
-            first_word_statement = words[0].lower()
-        else:
-            first_word_statement = ""
-
-        # NOTE: in duckdb db "from TABLE_NAME" is valid
-        # TODO: we can parse the query to ensure that it's a SELECT statement
-        # for example, it might start with WITH but the final statement might
-        # not be a SELECT
-        # `summarize` is added to support %sql SUMMARIZE table in duckdb
-        is_select = first_word_statement in {"select", "with", "from", "summarize"}
 
         operation = partial(self._execute_with_parameters, query, parameters)
         out = self._execute_with_error_handling(operation)
 
         if self._requires_manual_commit:
-            # calling connection.commit() when using duckdb-engine will yield
-            # empty results if we commit after a SELECT statement
-            # see: https://github.com/Mause/duckdb_engine/issues/734
-            if is_select and self.dialect == "duckdb":
-                return out
+            # Calling connection.commit() when using duckdb-engine will yield
+            # empty results if we commit after a SELECT or SUMMARIZE statement,
+            # see: https://github.com/Mause/duckdb_engine/issues/734.
+            if self.dialect == "duckdb":
+                no_commit = detect_duckdb_summarize_or_select(query)
+                if no_commit:
+                    return out
 
             # in sqlalchemy 1.x, connection has no commit attribute
             if IS_SQLALCHEMY_ONE:
@@ -763,6 +756,10 @@ class SQLAlchemyConnection(AbstractConnection):
 
     def _execute_with_parameters(self, query, parameters):
         """Execute the query with the given parameters"""
+        if parameters == {}:
+            return self._connection.exec_driver_sql(query)
+
+        parameters = parameters or {}
         if IS_SQLALCHEMY_ONE:
             out = self._connection.execute(sqlalchemy.text(query), **parameters)
         else:
@@ -823,7 +820,7 @@ class SQLAlchemyConnection(AbstractConnection):
             return self._connection_execute(query, parameters)
         else:
             try:
-                return self._connection_execute(query)
+                return self._connection_execute(query, parameters)
             except StatementError as e:
                 # add a more helpful message if the users passes :variable but
                 # the feature isn't enabled
@@ -834,9 +831,20 @@ class SQLAlchemyConnection(AbstractConnection):
                         named_params_ = ", ".join(named_params)
                         e.add_detail(
                             f"Your query contains named parameters ({named_params_}) "
-                            "but the named parameters feature is disabled. Enable it "
-                            "with: %config SqlMagic.named_parameters=True"
+                            'but the named parameters feature is "warn". \nEnable it '
+                            'with: %config SqlMagic.named_parameters="enabled" \nor '
+                            "disable it with: "
+                            '%config SqlMagic.named_parameters="disabled"\n'
+                            "For more info, see the docs: "
+                            "https://jupysql.ploomber.io/en/latest/api/configuration.html#named-parameters"  # noqa
                         )
+                elif parameters == {}:
+                    e.add_detail(
+                        'The named parameters feature is "disabled". '
+                        'Enable it with: %config SqlMagic.named_parameters="enabled".\n'
+                        "For more info, see the docs: "
+                        "https://jupysql.ploomber.io/en/latest/api/configuration.html#named-parameters"  # noqa
+                    )
                 raise
 
     def _execute_with_error_handling(self, operation):
@@ -896,6 +904,14 @@ class SQLAlchemyConnection(AbstractConnection):
             else:
                 raise
 
+        except ProgrammingError as e:
+            # error when accessing previously non-existing file with duckdb using
+            # sqlalchemy 2.x
+            if "duckdb.InvalidInputException" in str(e) and "please ROLLBACK" in str(e):
+                rollback_needed = True
+            else:
+                raise
+
         if rollback_needed:
             self._connection.rollback()
             out = operation()
@@ -945,7 +961,7 @@ class SQLAlchemyConnection(AbstractConnection):
         except Exception as e:
             raise _error_invalid_connection_info(e, connect_str) from e
 
-    def to_table(self, table_name, data_frame, if_exists, index):
+    def to_table(self, table_name, data_frame, if_exists, index, schema=None):
         """Create a table from a pandas DataFrame"""
         operation = partial(
             data_frame.to_sql,
@@ -953,6 +969,7 @@ class SQLAlchemyConnection(AbstractConnection):
             self.connection_sqlalchemy,
             if_exists=if_exists,
             index=index,
+            schema=schema,
         )
 
         try:
@@ -972,13 +989,7 @@ class DBAPIConnection(AbstractConnection):
 
     is_dbapi_connection = True
 
-    @telemetry.log_call("DBAPIConnection", payload=True)
-    def __init__(self, payload, connection, alias=None, config=None):
-        try:
-            payload["engine"] = type(connection)
-        except Exception as e:
-            payload["engine_parsing_error"] = str(e)
-
+    def __init__(self, connection, alias=None, config=None):
         # detect if the engine is a native duckdb connection
         _is_duckdb_native = _check_if_duckdb_dbapi_connection(connection)
 
@@ -1056,11 +1067,80 @@ class DBAPIConnection(AbstractConnection):
             "This feature is only available for SQLAlchemy connections"
         )
 
-    def to_table(self, table_name, data_frame, if_exists, index):
+    def to_table(self, table_name, data_frame, if_exists, index, schema=None):
         raise exceptions.NotImplementedError(
             "--persist/--persist-replace is not available for DBAPI connections"
             " (only available for SQLAlchemy connections)"
         )
+
+
+class SparkConnectConnection(AbstractConnection):
+    is_dbapi_connection = False
+
+    def __init__(self, connection, alias=None, config=None):
+        self._driver = None
+
+        # TODO: implement the dialect blacklist and add unit tests
+        self._requires_manual_commit = True if config is None else config.autocommit
+
+        self._connection = connection
+        self._connection_class_name = type(connection).__name__
+
+        # calling init from AbstractConnection must be the last thing we do as it
+        # register the connection
+        super().__init__(alias=alias or self._connection_class_name)
+
+        self.name = self._connection_class_name
+
+    @property
+    def dialect(self):
+        """Returns a string with the SQL dialect name"""
+        return "spark2"
+
+    def raw_execute(self, query, parameters=None):
+        """Run the query without any pre-processing"""
+        return handle_spark_dataframe(self._connection.sql(query))
+
+    def _get_database_information(self):
+        """
+        Get the dialect, driver, and database server version info of current
+        connection
+        """
+        return {
+            "dialect": self.dialect,
+            "driver": self._connection_class_name,
+            "server_version_info": self._connection.version,
+        }
+
+    @property
+    def url(self):
+        """Returns None since Spark connections don't have a url"""
+        return None
+
+    @property
+    def connection_sqlalchemy(self):
+        """
+        Raises NotImplementedError since Spark connections don't have a SQLAlchemy
+        connection object
+        """
+        raise NotImplementedError(
+            "This feature is only available for SQLAlchemy connections"
+        )
+
+    def to_table(self, table_name, data_frame, if_exists, index, schema=None):
+        mode = (
+            "overwrite"
+            if if_exists == "replace"
+            else "append" if if_exists == "append" else "error"
+        )
+        self._connection.createDataFrame(data_frame).write.mode(mode).saveAsTable(
+            f"{schema}.{table_name}" if schema else table_name
+        )
+
+    def close(self):
+        """Override of the abstract close as SparkSession is usually
+        shared with pyspark"""
+        pass
 
 
 def _check_if_duckdb_dbapi_connection(conn):
@@ -1157,6 +1237,26 @@ def is_pep249_compliant(conn):
     return True
 
 
+def is_spark(conn):
+    """Check if it is a SparkSession by checking for available methods"""
+
+    sparksession_methods = [
+        "table",
+        "read",
+        "createDataFrame",
+        "sql",
+        "stop",
+        "catalog",
+        "version",
+    ]
+    for method_name in sparksession_methods:
+        # Checking whether the connection object has the method
+        if not hasattr(conn, method_name):
+            return False
+
+    return True
+
+
 def default_alias_for_engine(engine):
     if not engine.url.username:
         # keeping this for compatibility
@@ -1176,6 +1276,30 @@ def set_sqlalchemy_isolation_level(conn):
         return True
     except Exception:
         return False
+
+
+def detect_duckdb_summarize_or_select(query):
+    """
+    Checks if the SQL query is a DuckDB SELECT or SUMMARIZE statement.
+
+    Note:
+    Assumes there is only one SQL statement in the query.
+    """
+    statements = sqlparse.parse(query)
+    if statements:
+        if len(statements) > 1:
+            raise NotImplementedError("Multiple statements are not supported")
+        stype = statements[0].get_type()
+        if stype == "SELECT":
+            return True
+        elif stype == "UNKNOWN":
+            # Further analysis is required
+            sql_stripped = sqlparse.format(query, strip_comments=True)
+            words = sql_stripped.split()
+            return len(words) > 0 and (
+                words[0].lower() == "from" or words[0].lower() == "summarize"
+            )
+    return False
 
 
 atexit.register(ConnectionManager.close_all, verbose=True)

@@ -3,9 +3,7 @@ import shutil
 from matplotlib import pyplot as plt
 import pytest
 import warnings
-from sql.telemetry import telemetry
 from sql.error_handler import CTE_MSG
-from unittest.mock import ANY, Mock
 from IPython.core.error import UsageError
 
 import math
@@ -21,7 +19,12 @@ ALL_DATABASES = [
     "ip_with_Snowflake",
     "ip_with_oracle",
     "ip_with_clickhouse",
+    "ip_with_spark",
 ]
+
+# NOTE: We don't need to add tests for Snowflake and Redshift
+# for future PRs.
+# Reference issue: https://github.com/ploomber/jupysql/issues/984
 
 
 @pytest.fixture(autouse=True)
@@ -33,39 +36,38 @@ def run_around_tests(tmpdir_factory):
     shutil.rmtree(str(my_tmpdir))
 
 
-@pytest.fixture
-def mock_log_api(monkeypatch):
-    mock_log_api = Mock()
-    monkeypatch.setattr(telemetry, "log_api", mock_log_api)
-    yield mock_log_api
-
-
 @pytest.mark.parametrize(
-    "ip_with_dynamic_db",
+    "ip_with_dynamic_db, query_prefix, query_suffix",
     [
-        "ip_with_postgreSQL",
-        "ip_with_mySQL",
-        "ip_with_mariaDB",
-        "ip_with_SQLite",
-        "ip_with_duckDB_native",
-        "ip_with_duckDB",
-        "ip_with_Snowflake",
-        "ip_with_redshift",
-        "ip_with_clickhouse",
+        ("ip_with_postgreSQL", "", "LIMIT 3"),
+        ("ip_with_mySQL", "", "LIMIT 3"),
+        ("ip_with_mariaDB", "", "LIMIT 3"),
+        ("ip_with_SQLite", "", "LIMIT 3"),
+        ("ip_with_duckDB_native", "", "LIMIT 3"),
+        ("ip_with_duckDB", "", "LIMIT 3"),
+        ("ip_with_Snowflake", "", "LIMIT 3"),
+        ("ip_with_redshift", "", "LIMIT 3"),
+        ("ip_with_clickhouse", "", "LIMIT 3"),
+        ("ip_with_oracle", "", "FETCH FIRST 3 ROWS ONLY"),
+        ("ip_with_MSSQL", "TOP 3", ""),
+        ("ip_with_spark", "", "LIMIT 3"),
     ],
 )
-def test_run_query(ip_with_dynamic_db, request, test_table_name_dict):
+def test_run_query(
+    ip_with_dynamic_db, query_prefix, query_suffix, request, test_table_name_dict
+):
     ip_with_dynamic_db = request.getfixturevalue(ip_with_dynamic_db)
 
     # run a query
     out = ip_with_dynamic_db.run_cell(
-        f"%sql SELECT * FROM {test_table_name_dict['taxi']} LIMIT 3"
+        f"%sql SELECT {query_prefix} * FROM {test_table_name_dict['taxi']} \
+            {query_suffix}"
     )
 
     # test --save
     ip_with_dynamic_db.run_cell(
-        f"%sql --save taxi_subset --no-execute SELECT * FROM\
-          {test_table_name_dict['taxi']} LIMIT 3"
+        f"%sql --save taxi_subset --no-execute SELECT {query_prefix} * FROM\
+          {test_table_name_dict['taxi']} {query_suffix}"
     )
 
     out_query_with_save_arg = ip_with_dynamic_db.run_cell(
@@ -88,6 +90,7 @@ def test_run_query(ip_with_dynamic_db, request, test_table_name_dict):
         "ip_with_Snowflake",
         "ip_with_redshift",
         "ip_with_clickhouse",
+        "ip_with_spark",
     ],
 )
 def test_handle_multiple_open_result_sets(
@@ -146,6 +149,7 @@ def test_handle_multiple_open_result_sets(
                 "No engine for table <table_name>"
             ),
         ),
+        ("ip_with_spark", "--no-index"),
     ],
 )
 def test_create_table_with_indexed_df(
@@ -168,11 +172,13 @@ def test_create_table_with_indexed_df(
         f"results = %sql SELECT * FROM {test_table_name_dict['taxi']}\
           LIMIT {limit}"
     )
+
     # Prepare expected df
     expected_df = ip_with_dynamic_db.run_cell(
         f"%sql SELECT * FROM {test_table_name_dict['taxi']}\
           LIMIT {limit}"
     )
+
     ip_with_dynamic_db.run_cell(
         f"{test_table_name_dict['new_table_from_df']} = results.DataFrame()"
     )
@@ -211,6 +217,7 @@ def get_connection_count(ip_with_dynamic_db):
         ("ip_with_MSSQL", 1),
         ("ip_with_Snowflake", 1),
         ("ip_with_clickhouse", 1),
+        ("ip_with_spark", 1),
     ],
 )
 def test_active_connection_number(ip_with_dynamic_db, expected, request):
@@ -251,40 +258,6 @@ def test_close_and_connect(
         ip_with_dynamic_db.run_cell("%sql " + database_url + " --alias " + conn_alias)
 
     assert get_connection_count(ip_with_dynamic_db) == 1
-
-
-@pytest.mark.parametrize(
-    "ip_with_dynamic_db, expected_dialect, expected_driver",
-    [
-        ("ip_with_postgreSQL", "postgresql", "psycopg2"),
-        ("ip_with_mySQL", "mysql", "pymysql"),
-        ("ip_with_mariaDB", "mysql", "pymysql"),
-        ("ip_with_SQLite", "sqlite", "pysqlite"),
-        ("ip_with_duckDB", "duckdb", "duckdb_engine"),
-        ("ip_with_duckDB_native", "duckdb", "DuckDBPyConnection"),
-        ("ip_with_MSSQL", "mssql", "pyodbc"),
-        ("ip_with_Snowflake", "snowflake", "snowflake"),
-        ("ip_with_oracle", "oracle", "oracledb"),
-        ("ip_with_clickhouse", "clickhouse", "native"),
-    ],
-)
-def test_telemetry_execute_command_has_connection_info(
-    ip_with_dynamic_db, expected_dialect, expected_driver, mock_log_api, request
-):
-    ip_with_dynamic_db = request.getfixturevalue(ip_with_dynamic_db)
-
-    mock_log_api.assert_called_with(
-        action="jupysql-execute-success",
-        total_runtime=ANY,
-        metadata={
-            "argv": ANY,
-            "connection_info": {
-                "dialect": expected_dialect,
-                "driver": expected_driver,
-                "server_version_info": ANY,
-            },
-        },
-    )
 
 
 @pytest.mark.parametrize(
@@ -330,6 +303,7 @@ def test_telemetry_execute_command_has_connection_info(
         ("ip_with_Snowflake"),
         ("ip_with_duckDB_native"),
         ("ip_with_redshift"),
+        ("ip_with_spark"),
         pytest.param(
             "ip_with_MSSQL",
             marks=pytest.mark.xfail(reason="sqlglot does not support SQL server"),
@@ -412,6 +386,9 @@ BOX_PLOT_FAIL_REASON = (
                 reason="Plotting from snippet not working in clickhouse"
             ),
         ),
+        pytest.param(
+            "ip_with_spark", marks=pytest.mark.xfail(reason=BOX_PLOT_FAIL_REASON)
+        ),
     ],
 )
 def test_sqlplot_boxplot(ip_with_dynamic_db, cell, request, test_table_name_dict):
@@ -435,6 +412,7 @@ def test_sqlplot_boxplot(ip_with_dynamic_db, cell, request, test_table_name_dict
         "ip_with_duckDB",
         "ip_with_redshift",
         "ip_with_MSSQL",
+        "ip_with_spark",
     ],
 )
 def test_sqlplot_bar(ip_with_dynamic_db, request, test_table_name_dict):
@@ -457,7 +435,13 @@ def test_sqlplot_bar(ip_with_dynamic_db, request, test_table_name_dict):
 
 @pytest.mark.parametrize(
     "ip_with_dynamic_db",
-    ["ip_with_postgreSQL", "ip_with_duckDB", "ip_with_redshift", "ip_with_MSSQL"],
+    [
+        "ip_with_postgreSQL",
+        "ip_with_duckDB",
+        "ip_with_redshift",
+        "ip_with_MSSQL",
+        "ip_with_spark",
+    ],
 )
 def test_sqlplot_pie(ip_with_dynamic_db, request, test_table_name_dict):
     plt.cla()
@@ -484,7 +468,10 @@ def test_sqlplot_pie(ip_with_dynamic_db, request, test_table_name_dict):
         ("ip_with_duckDB"),
         ("ip_with_Snowflake"),
         ("ip_with_duckDB_native"),
-        ("ip_with_redshift"),
+        pytest.param(
+            "ip_with_redshift",
+            marks=pytest.mark.xfail(reason="permission denied for database dev"),
+        ),
         pytest.param(
             "ip_with_SQLite",
             marks=pytest.mark.xfail(reason="does not support schema"),
@@ -507,6 +494,7 @@ def test_sqlplot_pie(ip_with_dynamic_db, request, test_table_name_dict):
                 reason="Plotting from snippet not working in clickhouse"
             ),
         ),
+        "ip_with_spark",
     ],
 )
 def test_sqlplot_using_schema(ip_with_dynamic_db, request):
@@ -514,8 +502,8 @@ def test_sqlplot_using_schema(ip_with_dynamic_db, request):
     plt.cla()
     ip_with_dynamic_db.run_cell(
         """%%sql
-CREATE SCHEMA schema1;
-CREATE TABLE schema1.table1 (
+CREATE SCHEMA IF NOT EXISTS schema1;
+CREATE TABLE IF NOT EXISTS schema1.table1 (
     x INTEGER,
     y INTEGER
 );
@@ -559,6 +547,7 @@ VALUES
         ("ip_with_Snowflake"),
         ("ip_with_oracle"),
         ("ip_with_clickhouse"),
+        ("ip_with_spark"),
     ],
 )
 def test_sqlcmd_test(ip_with_dynamic_db, request, test_table_name_dict):
@@ -594,6 +583,7 @@ def test_sqlcmd_test(ip_with_dynamic_db, request, test_table_name_dict):
         ),
         ("ip_with_oracle"),
         ("ip_with_clickhouse"),
+        ("ip_with_spark"),
     ],
 )
 def test_profile_data_mismatch(ip_with_dynamic_db, request, capsys):
@@ -776,6 +766,25 @@ def test_profile_data_mismatch(ip_with_dynamic_db, request, capsys):
             },
             "Following statistics are not available in",
         ),
+        (
+            "ip_with_spark",
+            "taxi",
+            ["taxi_driver_name"],
+            {
+                "count": [45],
+                "mean": [math.nan],
+                "min": ["Eric Ken"],
+                "max": ["Kevin Kelly"],
+                "unique": [3],
+                "freq": [15],
+                "top": ["Eric Ken"],
+                "std": [math.nan],
+                "25%": [math.nan],
+                "50%": [math.nan],
+                "75%": [math.nan],
+            },
+            None,
+        ),
     ],
 )
 def test_sqlcmd_profile(
@@ -837,6 +846,10 @@ def test_sqlcmd_profile(
         ("ip_with_MSSQL"),
         ("ip_with_Snowflake"),
         ("ip_with_clickhouse"),
+        pytest.param(
+            "ip_with_spark",
+            marks=pytest.mark.xfail(reason="Not Implemented"),
+        ),
     ],
 )
 def test_sqlcmd_columns(ip_with_dynamic_db, table, request, test_table_name_dict):
@@ -863,6 +876,10 @@ def test_sqlcmd_columns(ip_with_dynamic_db, table, request, test_table_name_dict
         ("ip_with_MSSQL"),
         ("ip_with_Snowflake"),
         ("ip_with_clickhouse"),
+        pytest.param(
+            "ip_with_spark",
+            marks=pytest.mark.xfail(reason="Not Implemented"),
+        ),
     ],
 )
 def test_sqlcmd_tables(ip_with_dynamic_db, request):
@@ -916,10 +933,8 @@ def test_sql_query(ip_with_dynamic_db, cell, request, test_table_name_dict):
         "ip_with_MSSQL",
         "ip_with_Snowflake",
         "ip_with_oracle",
-        pytest.param(
-            "ip_with_clickhouse",
-            marks=pytest.mark.xfail(reason="some issue in cte . issue #812"),
-        ),
+        "ip_with_clickhouse",
+        "ip_with_spark",
     ],
 )
 def test_sql_query_cte(ip_with_dynamic_db, request, test_table_name_dict, cell):
@@ -950,6 +965,7 @@ def test_sql_query_cte(ip_with_dynamic_db, request, test_table_name_dict, cell):
             "ip_with_clickhouse",
             marks=pytest.mark.xfail(reason="Not yet implemented"),
         ),
+        "ip_with_spark",
     ],
 )
 def test_sql_error_suggests_using_cte(ip_with_dynamic_db, request):
@@ -980,6 +996,7 @@ S"""
         "ip_with_MSSQL",
         "ip_with_oracle",
         "ip_with_clickhouse",
+        "ip_with_spark",
     ],
 )
 def test_results_sets_are_closed(ip_with_dynamic_db, request, test_table_name_dict):
@@ -1017,6 +1034,7 @@ DROP TABLE my_numbers
         "ip_with_MSSQL",
         "ip_with_oracle",
         "ip_with_clickhouse",
+        "ip_with_spark",
     ],
 )
 @pytest.mark.parametrize(
@@ -1143,6 +1161,7 @@ CREATE_GLOBAL_TEMPORARY_TABLE = (
             CREATE_TABLE,
             marks=pytest.mark.xfail(reason="Not working yet"),
         ),
+        ("ip_with_spark", CREATE_TABLE),
     ],
 )
 def test_autocommit_create_table_single_cell(
@@ -1215,6 +1234,7 @@ SELECT * FROM {__TABLE_NAME__};
             CREATE_TABLE,
             marks=pytest.mark.xfail(reason="Not working yet"),
         ),
+        ("ip_with_spark", CREATE_TABLE),
     ],
 )
 def test_autocommit_create_table_multiple_cells(
@@ -1246,3 +1266,316 @@ SELECT * FROM {__TABLE_NAME__};
     ).result
 
     assert len(result) == 3
+
+
+@pytest.mark.parametrize(
+    "ip_with_dynamic_db, snippet_name, error_msgs, error_type",
+    [
+        (
+            "ip_with_postgreSQL",
+            "mysnippet",
+            [
+                "function not_a_function(text) does not exist",
+                "No function matches the given name and argument types",
+            ],
+            "RuntimeError",
+        ),
+        (
+            "ip_with_postgreSQL",
+            "mysnip",
+            [
+                "If using snippets, you may pass the --with argument explicitly.",
+                'relation "mysnip" does not exist',
+            ],
+            "RuntimeError",
+        ),
+        (
+            "ip_with_mySQL",
+            "mysnippet",
+            [
+                "FUNCTION db.not_a_function does not exist",
+            ],
+            "RuntimeError",
+        ),
+        (
+            "ip_with_mySQL",
+            "mysnip",
+            [
+                "If using snippets, you may pass the --with argument explicitly.",
+                "Table 'db.mysnip' doesn't exist",
+            ],
+            "RuntimeError",
+        ),
+        (
+            "ip_with_mariaDB",
+            "mysnippet",
+            [
+                "FUNCTION db.not_a_function does not exist",
+            ],
+            "RuntimeError",
+        ),
+        (
+            "ip_with_mariaDB",
+            "mysnip",
+            [
+                "If using snippets, you may pass the --with argument explicitly.",
+                "Table 'db.mysnip' doesn't exist",
+            ],
+            "RuntimeError",
+        ),
+        (
+            "ip_with_MSSQL",
+            "mysnippet",
+            [
+                "not_a_function' is not a recognized built-in function name",
+            ],
+            "RuntimeError",
+        ),
+        pytest.param(
+            "ip_with_MSSQL",
+            "mysnip",
+            [
+                "If using snippets, you may pass the --with argument explicitly.",
+            ],
+            "RuntimeError",
+            marks=pytest.mark.xfail(
+                reason="MSSQL prioritizes function error over table error"
+            ),
+        ),
+        (
+            "ip_with_Snowflake",
+            "mysnippet",
+            [
+                "Unknown function NOT_A_FUNCTION",
+            ],
+            "RuntimeError",
+        ),
+        (
+            "ip_with_Snowflake",
+            "mysnip",
+            [
+                "If using snippets, you may pass the --with argument explicitly.",
+            ],
+            "RuntimeError",
+        ),
+        (
+            "ip_with_oracle",
+            "mysnippet",
+            [
+                '"NOT_A_FUNCTION": invalid identifier',
+            ],
+            "RuntimeError",
+        ),
+        (
+            "ip_with_oracle",
+            "mysnip",
+            [
+                'table or view "PLOOMBER_APP"."MYSNIP" does not exist',
+            ],
+            "RuntimeError",
+        ),
+        (
+            "ip_with_clickhouse",
+            "mysnippet",
+            [
+                "Unknown function not_a_function: While processing "
+                "not_a_function(taxi_driver_name)",
+            ],
+            "RuntimeError",
+        ),
+        (
+            "ip_with_clickhouse",
+            "mysnip",
+            [
+                "If using snippets, you may pass the --with argument explicitly.",
+            ],
+            "RuntimeError",
+        ),
+        (
+            "ip_with_redshift",
+            "mysnippet",
+            [
+                "function not_a_function(character varying) does not exist",
+            ],
+            "RuntimeError",
+        ),
+        (
+            "ip_with_redshift",
+            "mysnip",
+            [
+                "If using snippets, you may pass the --with argument explicitly.",
+            ],
+            "RuntimeError",
+        ),
+        (
+            "ip_with_duckDB_native",
+            "mysnippet",
+            [
+                "Scalar Function with name not_a_function does not exist!",
+            ],
+            "RuntimeError",
+        ),
+        (
+            "ip_with_duckDB_native",
+            "mysnip",
+            ["Table with name mysnip does not exist!"],
+            "RuntimeError",
+        ),
+        (
+            "ip_with_spark",
+            "mysnippet",
+            [
+                "Cannot resolve function `not_a_function` on search path",
+            ],
+            "RuntimeError",
+        ),
+        (
+            "ip_with_spark",
+            "mysnip",
+            ["Cannot resolve function `not_a_function` on search path"],
+            "RuntimeError",
+        ),
+    ],
+    ids=[
+        "no-typo-postgreSQL",
+        "with-typo-postgreSQL",
+        "no-typo-mySQL",
+        "with-typo-mySQL",
+        "no-typo-mariaDB",
+        "with-typo-mariaDB",
+        "no-typo-MSSQL",
+        "with-typo-MSSQL",
+        "no-typo-Snowflake",
+        "with-typo-Snowflake",
+        "no-typo-oracle",
+        "with-typo-oracle",
+        "no-typo-clickhouse",
+        "with-typo-clickhouse",
+        "no-typo-redshift",
+        "with-typo-redshift",
+        "no-typo-duckDB-native",
+        "with-typo-duckDB-native",
+        "no-typo-spark",
+        "with-typo-spark",
+    ],
+)
+def test_query_snippet_invalid_function_error_message(
+    request,
+    ip_with_dynamic_db,
+    snippet_name,
+    error_msgs,
+    error_type,
+    test_table_name_dict,
+):
+    # Set up snippet
+    ip_with_dynamic_db = request.getfixturevalue(ip_with_dynamic_db)
+    ip_with_dynamic_db.run_cell(
+        f"""
+        %%sql --save mysnippet
+        SELECT * FROM {test_table_name_dict['taxi']}
+        """
+    )
+
+    # Run query
+    with pytest.raises(UsageError) as excinfo:
+        ip_with_dynamic_db.run_cell(
+            f"%sql SELECT not_a_function(taxi_driver_name) FROM {snippet_name}"
+        )
+
+    # Save result and test error message
+    result_error = excinfo.value.error_type
+    result_msg = str(excinfo.value)
+    print(result_msg)
+    assert error_type == result_error
+    assert all(msg in result_msg for msg in error_msgs)
+
+
+@pytest.mark.parametrize(
+    "ip_with_dynamic_db, args",
+    [
+        ("ip_with_postgreSQL", ""),
+        ("ip_with_duckDB", ""),
+        # snowflake does not support "CREATE INDEX", so we need to
+        # pass --no-index
+        ("ip_with_Snowflake", "--no-index"),
+        pytest.param(
+            "ip_with_mySQL",
+            "",
+            marks=pytest.mark.xfail(reason="Access denied for user"),
+        ),
+        pytest.param(
+            "ip_with_mariaDB",
+            "",
+            marks=pytest.mark.xfail(reason="Access denied for user"),
+        ),
+        pytest.param(
+            "ip_with_SQLite", "", marks=pytest.mark.xfail(reason="schema not supported")
+        ),
+        pytest.param(
+            "ip_with_duckDB_native",
+            "",
+            marks=pytest.mark.xfail(
+                reason="'duckdb.DuckDBPyConnection' object has no attribute 'rowcount'"
+            ),
+        ),
+        pytest.param(
+            "ip_with_redshift",
+            "",
+            marks=pytest.mark.xfail(reason="permission denied for database dev"),
+        ),
+        pytest.param(
+            "ip_with_clickhouse",
+            "",
+            marks=pytest.mark.xfail(
+                reason="sqlalchemy.exc.CompileError: "
+                "No engine for table <table_name>"
+            ),
+        ),
+        ("ip_with_spark", "--no-index"),
+    ],
+)
+def test_persist_in_schema(ip_with_dynamic_db, args, request, test_table_name_dict):
+    limit = 15
+    expected = 15
+
+    ip_with_dynamic_db = request.getfixturevalue(ip_with_dynamic_db)
+    # Clean up
+
+    ip_with_dynamic_db.run_cell("%config SqlMagic.displaylimit = 0")
+
+    ip_with_dynamic_db.run_cell("%sql CREATE SCHEMA IF NOT EXISTS schema1;")
+
+    ip_with_dynamic_db.run_cell(
+        f"%sql DROP TABLE IF EXISTS "
+        f"schema1.{test_table_name_dict['new_table_from_df']}"
+    )
+
+    # Prepare DF
+    ip_with_dynamic_db.run_cell(
+        f"results = %sql SELECT * FROM {test_table_name_dict['taxi']}\
+          LIMIT {limit}"
+    )
+
+    # Prepare expected df
+    expected_df = ip_with_dynamic_db.run_cell(
+        f"%sql SELECT * FROM {test_table_name_dict['taxi']}\
+          LIMIT {limit}"
+    )
+
+    ip_with_dynamic_db.run_cell(
+        f"{test_table_name_dict['new_table_from_df']} = results.DataFrame()"
+    )
+    # Create table from DF
+    persist_out = ip_with_dynamic_db.run_cell(
+        f"%sql --persist schema1.{test_table_name_dict['new_table_from_df']} {args}"
+    )
+    out_df = ip_with_dynamic_db.run_cell(
+        f"%sql SELECT * FROM schema1.{test_table_name_dict['new_table_from_df']}"
+    )
+    assert persist_out.error_in_exec is None and out_df.error_in_exec is None
+    assert len(out_df.result) == expected
+
+    expected_df_ = expected_df.result.DataFrame()
+    out_df_ = out_df.result.DataFrame()
+
+    assert expected_df_.equals(out_df_.loc[:, out_df_.columns != "level_0"])

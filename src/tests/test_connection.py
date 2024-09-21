@@ -13,6 +13,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy import exc
 
+
 from sql.connection import connection as connection_module
 import sql.connection
 from sql.connection import (
@@ -21,7 +22,9 @@ from sql.connection import (
     ConnectionManager,
     is_pep249_compliant,
     default_alias_for_engine,
+    is_spark,
     ResultSetCollection,
+    detect_duckdb_summarize_or_select,
 )
 from sql.warnings import JupySQLRollbackPerformed
 from sql.connection import error_handling
@@ -38,6 +41,34 @@ def mock_database(monkeypatch, cleanup):
     monkeypatch.setitem(sys.modules, "some_driver", Mock())
     monkeypatch.setattr(Engine, "connect", Mock())
     monkeypatch.setattr(sqlalchemy, "create_engine", Mock())
+
+
+def mock_sparksession():
+    mock = Mock(
+        spec=[
+            "table",
+            "read",
+            "createDataFrame",
+            "sql",
+            "stop",
+            "catalog",
+            "version",
+        ]
+    )
+    return mock
+
+
+def mock_not_sparksession():
+    mock = Mock(
+        spec=[
+            "read",
+            "readStream",
+            "createDataFrame",
+            "sql",
+            "version",
+        ]
+    )
+    return mock
 
 
 @pytest.fixture
@@ -195,7 +226,7 @@ def test_is_use_backtick_template_sqlglot_missing_tokenizer_AttributeError(
     conn = SQLAlchemyConnection(engine=create_engine("sqlite://"))
 
     monkeypatch.setattr(conn, "_get_sqlglot_dialect", lambda: "mysql")
-    monkeypatch.setattr(sqlglot.Dialect.get_or_raise("mysql"), "Tokenizer", None)
+    monkeypatch.setattr(sqlglot.dialects.mysql.MySQL, "Tokenizer", None)
 
     assert conn.is_use_backtick_template() is False
 
@@ -456,6 +487,24 @@ def test_is_pep249_compliant(conn, expected):
     assert is_pep249_compliant(conn) is expected
 
 
+@pytest.mark.parametrize(
+    "descriptor, expected",
+    [
+        [sqlite3.connect(""), False],
+        [duckdb.connect(""), False],
+        [create_engine("sqlite://"), False],
+        [mock_sparksession(), True],
+        [mock_not_sparksession(), False],
+        [None, False],
+        [object(), False],
+        ["not_a_valid_connection", False],
+        [0, False],
+    ],
+)
+def test_is_spark(descriptor, expected):
+    assert is_spark(descriptor) is expected
+
+
 def test_close_all(ip_empty, monkeypatch):
     connections = {}
     monkeypatch.setattr(ConnectionManager, "connections", connections)
@@ -584,6 +633,22 @@ def test_set_dbapi(monkeypatch, callable_, key):
     monkeypatch.setattr(ConnectionManager, "connections", connections)
 
     conn = ConnectionManager.set(callable_(""), displaycon=False)
+
+    assert connections == {key: conn}
+    assert ConnectionManager.current == conn
+
+
+@pytest.mark.parametrize(
+    "spark, key",
+    [
+        [mock_sparksession(), "Mock"],
+    ],
+)
+def test_set_spark(monkeypatch, spark, key):
+    connections = {}
+    monkeypatch.setattr(ConnectionManager, "connections", connections)
+
+    conn = ConnectionManager.set(spark, displaycon=False)
 
     assert connections == {key: conn}
     assert ConnectionManager.current == conn
@@ -1184,3 +1249,63 @@ def test_database_in_directory_that_doesnt_exist(tmp_empty, uri, expected):
         SQLAlchemyConnection(engine=create_engine(uri))
 
     assert expected in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "query, expected_output",
+    [
+        ("SELECT * FROM table", True),
+        ("SUMMARIZE table", True),
+        ("FROM table SELECT *", True),
+        ("UPDATE table SET column=value", False),
+        ("INSERT INTO table (column) VALUES (value)", False),
+        ("INSERT INTO table SELECT * FROM table2", False),
+        (
+            "UPDATE table SET column=10 WHERE column IN (SELECT column FROM table2)",
+            False,
+        ),
+        ("WITH x AS (SELECT * FROM table) SELECT * FROM x", True),
+        ("WITH x AS (SELECT * FROM table) INSERT INTO y SELECT * FROM x", False),
+        ("", False),
+        ("DELETE FROM table", False),
+        ("WITH summarize AS (SELECT * FROM table) SELECT * FROM summarize", True),
+        (
+            """
+            WITH summarize AS (SELECT * FROM table)
+            INSERT INTO y SELECT * FROM summarize
+            """,
+            False,
+        ),
+        ("UPDATE table SET column='SELECT'", False),
+        ("CREATE TABLE SELECT (id INT)", False),
+        ("CREATE TABLE x (SELECT VARCHAR(100))", False),
+        ('INSTALL "x"', False),
+        ("SELECT SUM(column) FILTER (WHERE column > 10) FROM table", True),
+        ("SELECT column FROM (SELECT * FROM table WHERE column = 'SELECT') AS x", True),
+        # Invalid SQL returns false
+        ("INSERT INTO table (column) VALUES ('SELECT')", False),
+        # Comments have no effect
+        ("-- SELECT * FROM table", False),
+        ("-- SELECT * FROM table\nSELECT * FROM table", True),
+        ("-- SELECT * FROM table\nINSERT INTO table SELECT * FROM table2", False),
+        ("-- FROM table SELECT *", False),
+        ("-- FROM table SELECT *\n/**/FROM/**/ table SELECT */**/", True),
+        ("-- FROM table SELECT *\nINSERT INTO table FROM table2 SELECT *", False),
+        (
+            """
+            -- INSERT INTO table SELECT * FROM table2
+            SELECT /**/ * FROM tbl /**/
+            """,
+            True,
+        ),
+        (
+            """
+            -- INSERT INTO table SELECT * FROM table2
+            /**/SUMMARIZE/**/ /**//**/tbl/**/
+            """,
+            True,
+        ),
+    ],
+)
+def test_detect_duckdb_summarize_or_select(query, expected_output):
+    assert detect_duckdb_summarize_or_select(query) == expected_output

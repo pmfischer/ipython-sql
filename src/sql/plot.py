@@ -1,6 +1,7 @@
 """
 Plot using the SQL backend
 """
+
 from ploomber_core.dependencies import requires
 from ploomber_core.exceptions import modify_exceptions
 from jinja2 import Template
@@ -28,7 +29,6 @@ except ModuleNotFoundError:
     np = None
 
 import sql.connection
-from sql.telemetry import telemetry
 import warnings
 
 
@@ -177,10 +177,7 @@ def _boxplot_stats(conn, table, column, whis=1.5, autorange=False, with_=None):
 
 # https://github.com/matplotlib/matplotlib/blob/ddc260ce5a53958839c244c0ef0565160aeec174/lib/matplotlib/axes/_axes.py#L3915
 @requires(["matplotlib"])
-@telemetry.log_call("boxplot", payload=True)
-def boxplot(
-    payload, table, column, *, orient="v", with_=None, conn=None, ax=None, schema=None
-):
+def boxplot(table, column, *, orient="v", with_=None, conn=None, ax=None, schema=None):
     """Plot boxplot
 
     Parameters
@@ -230,13 +227,11 @@ def boxplot(
     if not conn:
         conn = sql.connection.ConnectionManager.current
 
-    payload["connection_info"] = conn._get_database_information()
-
     _table = enclose_table_with_double_quotations(table, conn)
     if schema:
         _table = f'"{schema}"."{_table}"'
 
-    ax = plt.gca()
+    ax = ax or plt.gca()
     vert = orient == "v"
 
     set_ticklabels = ax.set_xticklabels if vert else ax.set_yticklabels
@@ -268,10 +263,9 @@ FROM {{table}}
 """
     if use_backticks:
         template_ = template_.replace('"', "`")
-
+        table = table.replace('"', "`")
     template = Template(template_)
     query = template.render(table=table, column=column)
-
     min_, max_ = conn.execute(query, with_).fetchone()
     return min_, max_
 
@@ -316,9 +310,7 @@ def _get_bar_width(ax, bins, bin_size, binwidth):
 
 
 @requires(["matplotlib"])
-@telemetry.log_call("histogram", payload=True)
 def histogram(
-    payload,
     table,
     column,
     bins,
@@ -409,7 +401,7 @@ def histogram(
         _table = f'"{schema}"."{_table}"'
 
     ax = ax or plt.gca()
-    payload["connection_info"] = conn._get_database_information()
+
     if category:
         if isinstance(column, list):
             if len(column) > 1:
@@ -628,6 +620,7 @@ def _histogram(
 
             if use_backticks:
                 template_ = template_.replace('"', "`")
+                table = table.replace('"', "`")
 
             template = Template(template_)
 
@@ -663,6 +656,7 @@ def _histogram(
 
             if use_backticks:
                 template_ = template_.replace('"', "`")
+                table = table.replace('"', "`")
 
             template = Template(template_)
 
@@ -681,6 +675,7 @@ def _histogram(
 
         if use_backticks:
             template_ = template_.replace('"', "`")
+            table = table.replace('"', "`")
 
         template = Template(template_)
 
@@ -835,6 +830,7 @@ def _bar(table, column, with_=None, conn=None):
 
         if use_backticks:
             template_ = template_.replace('"', "`")
+            table = table.replace('"', "`")
 
         template = Template(template_)
         query = template.render(table=table, x_=x_, height_=height_)
@@ -854,6 +850,7 @@ def _bar(table, column, with_=None, conn=None):
 
         if use_backticks:
             template_ = template_.replace('"', "`")
+            table = table.replace('"', "`")
 
         template = Template(template_)
         query = template.render(table=table, column=column)
@@ -869,9 +866,7 @@ def _bar(table, column, with_=None, conn=None):
 
 
 @requires(["matplotlib"])
-@telemetry.log_call("bar", payload=True)
 def bar(
-    payload,
     table,
     column,
     show_num=False,
@@ -923,7 +918,6 @@ def bar(
         _table = f'"{schema}"."{_table}"'
 
     ax = ax or plt.gca()
-    payload["connection_info"] = conn._get_database_information()
 
     if column is None:
         raise exceptions.UsageError("Column name has not been specified")
@@ -1022,6 +1016,7 @@ def _pie(table, column, with_=None, conn=None):
                 """
         if use_backticks:
             template_ = template_.replace('"', "`")
+            table = table.replace('"', "`")
 
         template = Template(template_)
         query = template.render(table=table, labels_=labels_, size_=size_)
@@ -1037,6 +1032,7 @@ def _pie(table, column, with_=None, conn=None):
                 """
         if use_backticks:
             template_ = template_.replace('"', "`")
+            table = table.replace('"', "`")
 
         template = Template(template_)
         query = template.render(table=table, column=column)
@@ -1052,9 +1048,7 @@ def _pie(table, column, with_=None, conn=None):
 
 
 @requires(["matplotlib"])
-@telemetry.log_call("bar", payload=True)
 def pie(
-    payload,
     table,
     column,
     show_num=False,
@@ -1100,7 +1094,6 @@ def pie(
         _table = f'"{schema}"."{_table}"'
 
     ax = ax or plt.gca()
-    payload["connection_info"] = conn._get_database_information()
 
     if column is None:
         raise exceptions.UsageError("Column name has not been specified")

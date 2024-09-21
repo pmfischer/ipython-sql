@@ -121,7 +121,7 @@ databaseConfig = {
         "alias": "mySQLTest",
         "docker_ct": {
             "name": "mysql",
-            "image": "mysql",
+            "image": "mysql:8.0",
             "ports": {3306: 33306},
         },
         "query": {},
@@ -191,11 +191,11 @@ databaseConfig = {
         "database": None,
         "docker_ct": {
             "name": "oracle",
-            "image": "gvenzl/oracle-xe",
+            "image": "gvenzl/oracle-free",
             "ports": {1521: 1521},
         },
         "query": {
-            "service_name": "XEPDB1",
+            "service_name": "FREEPDB1",
         },
     },
     "redshift": {
@@ -209,6 +209,10 @@ databaseConfig = {
         "alias": "redshift",
         "docker_ct": None,
         "query": {},
+    },
+    "spark": {
+        "alias": "SparkSession",
+        "drivername": "SparkSession",
     },
     "clickhouse": {
         "drivername": "clickhouse+native",

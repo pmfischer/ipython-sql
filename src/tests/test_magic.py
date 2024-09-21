@@ -3,6 +3,7 @@ import uuid
 import logging
 import platform
 import sqlite3
+from decimal import Decimal
 from pathlib import Path
 import os.path
 import re
@@ -18,7 +19,7 @@ import pytest
 from sqlalchemy import create_engine
 from IPython.core.error import UsageError
 from sql.connection import ConnectionManager
-from sql.magic import SqlMagic
+from sql.magic import SqlMagic, get_query_type
 from sql.run.resultset import ResultSet
 from sql import magic
 from sql.warnings import JupySQLQuotedNamedParametersWarning
@@ -238,6 +239,42 @@ def test_persist(ip):
     ip.run_cell("%sql --persist sqlite:// results_dframe")
     persisted = runsql(ip, "SELECT * FROM results_dframe")
     assert persisted == [(0, 1, "foo"), (1, 2, "bar")]
+
+
+def test_persist_in_schema(ip_empty):
+    ip_empty.run_cell("%sql duckdb://")
+    ip_empty.run_cell("%sql CREATE SCHEMA IF NOT EXISTS schema1;")
+    df = pd.DataFrame({"a": [1, 2, 3]})
+    ip_empty.push({"df": df})
+    ip_empty.run_cell("%sql --persist schema1.df")
+    persisted = ip_empty.run_cell("%sql SELECT * FROM schema1.df;").result.DataFrame()
+    assert persisted["a"].tolist() == [1, 2, 3]
+
+
+def test_persist_replace_in_schema(ip_empty):
+    ip_empty.run_cell("%sql duckdb://")
+    ip_empty.run_cell("%sql CREATE SCHEMA IF NOT EXISTS schema1;")
+    df = pd.DataFrame({"a": [1, 2, 3]})
+    ip_empty.push({"df": df})
+    ip_empty.run_cell("%sql --persist schema1.df")
+    df = pd.DataFrame({"a": [6, 7]})
+    ip_empty.push({"df": df})
+    ip_empty.run_cell("%sql --perist-replace schema1.df")
+    persisted = ip_empty.run_cell("%sql SELECT * FROM schema1.df;").result.DataFrame()
+    assert persisted["a"].tolist() == [1, 2, 3]
+
+
+def test_append_in_schema(ip_empty):
+    ip_empty.run_cell("%sql duckdb://")
+    ip_empty.run_cell("%sql CREATE SCHEMA IF NOT EXISTS schema1;")
+    df = pd.DataFrame({"a": [1, 2, 3]})
+    ip_empty.push({"df": df})
+    ip_empty.run_cell("%sql --persist schema1.df")
+    df = pd.DataFrame({"a": [6, 7]})
+    ip_empty.push({"df": df})
+    ip_empty.run_cell("%sql --append schema1.df")
+    persisted = ip_empty.run_cell("%sql SELECT * FROM schema1.df;").result.DataFrame()
+    assert persisted["a"].tolist() == [1, 2, 3, 6, 7]
 
 
 def test_persist_no_index(ip):
@@ -1181,12 +1218,12 @@ def test_error_on_invalid_connection_string_with_possible_typo(ip_empty, clean_c
     assert invalid_connection_string_with_possible_typo.strip() == str(excinfo.value)
 
 
-invalid_connection_string_duckdb = f"""
+invalid_connection_string_duckdb_top = """
 An error happened while creating the connection: connect(): incompatible function arguments. The following argument types are supported:
     1. (database: str = ':memory:', read_only: bool = False, config: dict = None) -> duckdb.DuckDBPyConnection
+"""  # noqa
 
-Invoked with: kwargs: host='invalid_db', config={{}}.
-
+invalid_connection_string_duckdb_bottom = f"""
 Perhaps you meant to use the 'duckdb' db 
 To find more information regarding connection: https://jupysql.ploomber.io/en/latest/integrations/duckdb.html
 
@@ -1204,7 +1241,8 @@ def test_error_on_invalid_connection_string_duckdb(ip_empty, clean_conns):
     with pytest.raises(UsageError) as excinfo:
         ip_empty.run_cell("%sql duckdb://invalid_db")
 
-    assert invalid_connection_string_duckdb.strip() == str(excinfo.value)
+    assert invalid_connection_string_duckdb_top.strip() in str(excinfo.value)
+    assert invalid_connection_string_duckdb_bottom.strip() in str(excinfo.value)
 
 
 @pytest.mark.parametrize(
@@ -1533,9 +1571,13 @@ def test_error_suggests_turning_feature_on_if_it_detects_named_params(ip):
         ip.run_cell("%sql SELECT * FROM penguins.csv where species = :species")
 
     suggestion = (
-        "Your query contains named parameters (species) but the named "
-        "parameters feature is disabled. Enable it with: "
-        "%config SqlMagic.named_parameters=True"
+        "Your query contains named parameters (species) "
+        'but the named parameters feature is "warn". \nEnable it '
+        'with: %config SqlMagic.named_parameters="enabled" \nor '
+        "disable it with: "
+        '%config SqlMagic.named_parameters="disabled"\n'
+        "For more info, see the docs: "
+        "https://jupysql.ploomber.io/en/latest/api/configuration.html"
     )
     assert suggestion in str(excinfo.value)
 
@@ -1940,14 +1982,14 @@ def test_summarize_in_duckdb(ip_empty):
         "column_type": ("INTEGER", "INTEGER"),
         "min": ("1", "-1"),
         "max": ("3", "2"),
-        "approx_unique": ("3", "3"),
+        "approx_unique": (3, 3),
         "avg": ("2.0", "0.6666666666666666"),
         "std": ("1.0", "1.5275252316519468"),
         "q25": ("1", "0"),
         "q50": ("2", "1"),
         "q75": ("3", "2"),
         "count": (3, 3),
-        "null_percentage": ("0.0%", "0.0%"),
+        "null_percentage": (Decimal("0.00"), Decimal("0.00")),
     }
 
     ip_empty.run_cell("%sql duckdb://")
@@ -1964,3 +2006,764 @@ INSERT INTO table1 VALUES (1, -1), (2, 1), (3, 2)"""
 SUMMARIZE table1"""
     ).result
     assert out.dict() == expected_result
+
+
+def test_accessing_previously_nonexisting_file(ip_empty, tmp_empty, capsys):
+    ip_empty.run_cell("%sql duckdb://")
+    with pytest.raises(UsageError):
+        ip_empty.run_cell("%sql SELECT * FROM 'data.csv' LIMIT 3")
+
+    Path("data.csv").write_text(
+        "name,age\nDan,33\nBob,19\nSheri,\nVin,33\nMick,\nJay,33\nSky,33"
+    )
+    expected = (
+        "+-------+------+\n"
+        "|  name | age  |\n"
+        "+-------+------+\n"
+        "|  Dan  |  33  |\n"
+        "|  Bob  |  19  |\n"
+        "| Sheri | None |\n"
+        "+-------+------+"
+    )
+
+    ip_empty.run_cell("%sql SELECT * FROM 'data.csv' LIMIT 3")
+    out, _ = capsys.readouterr()
+    assert expected in out
+
+
+expected_summarize = {
+    "column_name": ("memid",),
+    "column_type": ("BIGINT",),
+    "min": ("1",),
+    "max": ("8",),
+    "approx_unique": (5,),
+    "avg": ("3.8",),
+    "std": ("2.7748873851023217",),
+    "q25": ("2",),
+    "q50": ("3",),
+    "q75": ("6",),
+    "count": (5,),
+    "null_percentage": (Decimal("0.00"),),
+}
+expected_select = {"memid": (1, 2, 3, 5, 8)}
+
+
+@pytest.mark.parametrize(
+    "cell, expected_output",
+    [
+        ("%sql /* x */ SUMMARIZE df", expected_summarize),
+        ("%sql /*x*//*x*/ SUMMARIZE /*x*/ df", expected_summarize),
+        (
+            """%%sql
+            /*x*/
+            SUMMARIZE df
+            """,
+            expected_summarize,
+        ),
+        (
+            """%%sql
+            /*x*/
+            /*x*/
+            -- comment
+            SUMMARIZE df
+            /*x*/
+            """,
+            expected_summarize,
+        ),
+        (
+            """%%sql
+            /*x*/
+            SELECT * FROM df
+            """,
+            expected_select,
+        ),
+        (
+            """%%sql
+            /*x*/
+            FROM df SELECT *
+            """,
+            expected_select,
+        ),
+    ],
+)
+def test_comments_in_duckdb_select_summarize(ip_empty, cell, expected_output):
+    ip_empty.run_cell("%sql duckdb://")
+    df = pd.DataFrame(  # noqa: F841
+        data=dict(
+            memid=[1, 2, 3, 5, 8],
+        ),
+    )
+    out = ip_empty.run_cell(cell).result
+    assert out.dict() == expected_output
+
+
+@pytest.mark.parametrize(
+    "setup, save_snippet, query_with_error, error_msgs, error_type",
+    [
+        (
+            """
+            %sql duckdb://
+            %sql CREATE TABLE penguins (id INTEGER)
+            %sql INSERT INTO penguins VALUES (1)
+            """,
+            """
+            %%sql --save mysnippet
+            SELECT * FROM penguins
+            """,
+            "%sql select not_a_function(id) from mysnippet",
+            [
+                "Scalar Function with name not_a_function does not exist!",
+            ],
+            "RuntimeError",
+        ),
+        (
+            """
+            %sql duckdb://
+            %sql CREATE TABLE penguins (id INTEGER)
+            %sql INSERT INTO penguins VALUES (1)
+            """,
+            """
+            %%sql --save mysnippet
+            SELECT * FROM penguins
+            """,
+            "%sql select not_a_function(id) from mysnip",
+            [
+                "If using snippets, you may pass the --with argument explicitly.",
+                "There is no table with name 'mysnip'",
+                "Table with name mysnip does not exist!",
+            ],
+            "TableNotFoundError",
+        ),
+        (
+            "%sql sqlite://",
+            """
+            %%sql --save mysnippet
+            select * from test
+            """,
+            "%sql select not_a_function(name) from mysnippet",
+            [
+                "no such function: not_a_function",
+            ],
+            "RuntimeError",
+        ),
+        (
+            "%sql sqlite://",
+            """
+            %%sql --save mysnippet
+            select * from test
+            """,
+            "%sql select not_a_function(name) from mysnip",
+            [
+                "If using snippets, you may pass the --with argument explicitly.",
+                "There is no table with name 'mysnip'",
+                "no such table: mysnip",
+            ],
+            "TableNotFoundError",
+        ),
+    ],
+    ids=[
+        "no-typo-duckdb",
+        "with-typo-duckdb",
+        "no-typo-sqlite",
+        "with-typo-sqlite",
+    ],
+)
+def test_query_snippet_invalid_function_error_message(
+    ip, setup, save_snippet, query_with_error, error_msgs, error_type
+):
+    # Set up snippet.
+    ip.run_cell(setup)
+    ip.run_cell(save_snippet)
+
+    # Run query
+    with pytest.raises(UsageError) as excinfo:
+        ip.run_cell(query_with_error)
+
+    # Save result and test error message
+    result_error = excinfo.value.error_type
+    result_msg = str(excinfo.value)
+
+    assert error_type == result_error
+    assert all(msg in result_msg for msg in error_msgs)
+
+
+@pytest.mark.parametrize(
+    "sql_snippet, sql_query, expected_result, raises",
+    [
+        (
+            """%%sql --save language_lt1
+select * from languages where rating < 1""",
+            """%%sql
+create table langs as (
+    select * from language_lt1
+)""",
+            """Your query is using the following snippets: language_lt1. \
+The query is not a SELECT type query and as snippets only work \
+with SELECT queries, CTE generation is disabled""",
+            True,
+        ),
+        (
+            """%%sql --save language_lt2
+select * from languages where rating < 2""",
+            """%%sql
+with langs as (
+    select * from language_lt2
+) select * from langs """,
+            """Your query is using one or more of the following snippets: \
+language_lt2. JupySQL does not support snippet expansion within CTEs yet, \
+CTE generation is disabled""",
+            True,
+        ),
+        (
+            """%%sql --save language_lt3
+select * from languages where rating < 3""",
+            """%%sql
+create table langs1 as (
+    WITH language_lt3 as (
+        select * from languages where rating < 3
+    )
+    select * from language_lt3
+) """,
+            """Your query is using the following snippets: language_lt3. \
+The query is not a SELECT type query and as snippets only work \
+with SELECT queries, CTE generation is disabled""",
+            False,
+        ),
+    ],
+)
+def test_warn_when_using_snippets_in_non_select_command(
+    ip_empty, capsys, sql_snippet, sql_query, expected_result, raises
+):
+    ip_empty.run_cell("%sql duckdb://")
+    ip_empty.run_cell("%sql create table languages (name VARCHAR, rating INTEGER)")
+    ip_empty.run_cell(
+        """%%sql
+INSERT INTO languages VALUES ('Python', 1), ('Java', 0), ('OCaml', 2)"""
+    )
+
+    ip_empty.run_cell(sql_snippet)
+
+    if raises:
+        with pytest.raises(UsageError) as _:
+            ip_empty.run_cell(sql_query)
+    else:
+        ip_empty.run_cell(sql_query)
+
+    out, _ = capsys.readouterr()
+    assert expected_result in out
+
+
+@pytest.mark.parametrize(
+    "query, query_type",
+    [
+        (
+            """
+            CREATE TABLE penguins AS (
+                WITH my_penguins AS (
+                    SELECT * FROM penguins.csv
+                )
+                SELECT * FROM my_penguins
+            )
+            """,
+            "CREATE",
+        ),
+        (
+            """
+            WITH my_penguins AS (
+                SELECT * FROM penguins.csv
+            )
+            SELECT * FROM my_penguins
+            """,
+            "SELECT",
+        ),
+        (
+            """
+            WITH my_penguins AS (
+                SELECT * FROM penguins.csv
+            )
+            * FROM my_penguins
+            """,
+            None,
+        ),
+    ],
+)
+def test_get_query_type(query, query_type):
+    assert get_query_type(query) == query_type
+
+
+@pytest.mark.parametrize(
+    "query, expected",
+    [
+        (
+            "%sql select '{\"a\": 1}'::json -> 'a';",
+            1,
+        ),
+        (
+            '%sql select \'[{"b": "c"}]\'::json -> 0;',
+            {"b": "c"},
+        ),
+        (
+            "%sql select '{\"a\": 1}'::json ->> 'a';",
+            "1",
+        ),
+        (
+            '%sql select \'[{"b": "c"}]\'::json ->> 0;',
+            '{"b":"c"}',
+        ),
+        (
+            """%%sql select '{\"a\": 1}'::json
+            ->
+            'a';""",
+            1,
+        ),
+        (
+            """%%sql select '[{\"b\": \"c\"}]'::json
+                ->
+            0;""",
+            {"b": "c"},
+        ),
+        (
+            """%%sql select '{\"a\": 1}'::json
+              ->>
+            'a';""",
+            "1",
+        ),
+        (
+            """%%sql
+            select
+            \'[{"b": "c"}]\'::json
+            ->>
+            0;""",
+            '{"b":"c"}',
+        ),
+        (
+            "%sql SELECT '{\"a\": 1}'::json -> 'a';",
+            1,
+        ),
+        (
+            "%sql SELect '{\"a\": 1}'::json -> 'a';",
+            1,
+        ),
+        (
+            "%sql SELECT json('{\"a\": 1}') -> 'a';",
+            1,
+        ),
+    ],
+    ids=[
+        "single-key",
+        "single-index",
+        "double-key",
+        "double-index",
+        "single-key-multi-line",
+        "single-index-multi-line-tab",
+        "double-key-multi-line-space",
+        "double-index-multi-line",
+        "single-key-all-caps",
+        "single-key-mixed-caps",
+        "single-key-cast-parentheses",
+    ],
+)
+def test_json_arrow_operators(ip, query, expected):
+    ip.run_cell("%sql duckdb://")
+    result = ip.run_cell(query).result
+    result = list(result.dict().values())[0][0]
+    assert result == expected
+
+
+@pytest.mark.parametrize(
+    "query_save, query_snippet, expected",
+    [
+        (
+            """%%sql --save snippet
+            select '{\"a\": 1}'::json -> 'a';""",
+            "%sql select * from snippet",
+            1,
+        ),
+        (
+            """%sql --save snippet select '[{\"b\": \"c\"}]'::json ->> 0;""",
+            "%sql select * from snippet",
+            '{"b":"c"}',
+        ),
+        (
+            """%%sql --save snippet
+            select '[1, 2, 3]'::json
+            -> 2
+            as number""",
+            "%sql select number from snippet",
+            3,
+        ),
+    ],
+    ids=["cell-magic-key", "line-magic-index", "cell-magic-multi-line-as-column"],
+)
+def test_json_arrow_operators_with_snippets(ip, query_save, query_snippet, expected):
+    ip.run_cell("%sql duckdb://")
+    ip.run_cell(query_save)
+    result = ip.run_cell(query_snippet).result
+    result = list(result.dict().values())[0][0]
+    assert result == expected
+
+
+@pytest.mark.parametrize(
+    "query, expected",
+    [
+        (
+            """%%sql
+SELECT 1""",
+            1,
+        ),
+        (
+            """%%sql
+SELECT 1 -- comment""",
+            1,
+        ),
+        (
+            """%%sql
+SELECT 1
+-- comment""",
+            1,
+        ),
+        (
+            """%%sql
+SELECT 1; -- comment""",
+            1,
+        ),
+        (
+            """%%sql
+SELECT 1;
+-- comment""",
+            1,
+        ),
+        (
+            """%%sql
+-- comment before
+SELECT 1;""",
+            1,
+        ),
+        (
+            """%%sql
+-- comment before
+SELECT 1;
+-- comment after""",
+            1,
+        ),
+        (
+            """%%sql
+SELECT 1; -- comment
+SELECT 2""",
+            2,
+        ),
+        (
+            """%%sql
+SELECT 1; -- comment
+SELECT 2;""",
+            2,
+        ),
+        (
+            """%%sql
+SELECT 1;
+-- comment
+SELECT 2;""",
+            2,
+        ),
+        (
+            """%%sql
+SELECT 1;
+-- comment before
+SELECT 2;
+-- comment after""",
+            2,
+        ),
+        (
+            """%%sql
+SELECT 1; -- comment before
+SELECT 2;
+-- comment after""",
+            2,
+        ),
+    ],
+)
+def test_query_comment_after_semicolon(ip, query, expected):
+    result = ip.run_cell(query).result
+    assert list(result.dict().values())[-1][0] == expected
+
+
+@pytest.mark.parametrize(
+    "query, error_type, error_message",
+    [
+        (
+            """%%sql
+SELECT * FROM snip;
+SELECT * from temp;""",
+            "TableNotFoundError",
+            """If using snippets, you may pass the --with argument explicitly.
+For more details please refer: \
+https://jupysql.ploomber.io/en/latest/compose.html#with-argument
+
+There is no table with name 'snip'.
+Did you mean: 'snippet'
+
+
+Original error message from DB driver:
+(duckdb.duckdb.CatalogException) Catalog Error: Table with name snip does not exist!
+Did you mean "temp"?
+LINE 1: SELECT * FROM snip;
+                      ^
+[SQL: SELECT * FROM snip;]""",
+        ),
+        (
+            """%%sql
+SELECT * FROM snippet;
+SELECT * from tem;""",
+            "RuntimeError",
+            """If using snippets, you may pass the --with argument explicitly.
+For more details please refer: \
+https://jupysql.ploomber.io/en/latest/compose.html#with-argument
+
+
+Original error message from DB driver:
+(duckdb.duckdb.CatalogException) Catalog Error: Table with name tem does not exist!
+Did you mean "temp"?
+LINE 1: SELECT * from tem;
+                      ^
+[SQL: SELECT * from tem;]""",
+        ),
+        (
+            """%%sql
+SELECT * FROM snip;
+SELECT * from tem;""",
+            "TableNotFoundError",
+            """If using snippets, you may pass the --with argument explicitly.
+For more details please refer: \
+https://jupysql.ploomber.io/en/latest/compose.html#with-argument
+
+There is no table with name 'snip'.
+Did you mean: 'snippet'
+
+
+Original error message from DB driver:
+(duckdb.duckdb.CatalogException) Catalog Error: Table with name snip does not exist!
+Did you mean "temp"?
+LINE 1: SELECT * FROM snip;
+                      ^
+[SQL: SELECT * FROM snip;]""",
+        ),
+        (
+            """%%sql
+SELECT * FROM s;
+SELECT * from temp;""",
+            "RuntimeError",
+            """If using snippets, you may pass the --with argument explicitly.
+For more details please refer: \
+https://jupysql.ploomber.io/en/latest/compose.html#with-argument
+
+
+Original error message from DB driver:
+(duckdb.duckdb.CatalogException) Catalog Error: Table with name s does not exist!
+Did you mean "temp"?
+LINE 1: SELECT * FROM s;
+                      ^
+[SQL: SELECT * FROM s;]""",
+        ),
+        (
+            """%%sql
+DROP TABLE temp;
+SELECT * FROM snippet;
+SELECT * from temp;""",
+            "RuntimeError",
+            """If using snippets, you may pass the --with argument explicitly.
+For more details please refer: \
+https://jupysql.ploomber.io/en/latest/compose.html#with-argument
+
+
+Original error message from DB driver:
+(duckdb.duckdb.CatalogException) Catalog Error: Table with name snippet does not exist!
+Did you mean "pg_type"?
+LINE 1: SELECT * FROM snippet;
+                      ^
+[SQL: SELECT * FROM snippet;]""",
+        ),
+    ],
+    ids=[
+        "snippet-typo",
+        "table-typo",
+        "both-typo",
+        "snippet-typo-no-suggestion",
+        "no-typo-drop-table",
+    ],
+)
+def test_table_does_not_exist_with_snippet_error(
+    ip_empty, query, error_type, error_message
+):
+    ip_empty.run_cell(
+        """%load_ext sql
+%sql duckdb://"""
+    )
+    # Create temp table
+    ip_empty.run_cell(
+        """%%sql
+CREATE TABLE temp AS
+SELECT * FROM penguins.csv"""
+    )
+
+    # Create snippet
+    ip_empty.run_cell(
+        """%%sql --save snippet
+SELECT * FROM penguins.csv;"""
+    )
+
+    # Run query
+    with pytest.raises(Exception) as excinfo:
+        ip_empty.run_cell(query)
+
+    # Test error and message
+    assert error_type == excinfo.value.error_type
+    assert error_message in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "query, expected",
+    [
+        ("%sql select 5 * -2", (-10,)),
+        ("%sql select 5 * - 2", (-10,)),
+        ("%sql select 5 * -2;", (-10,)),
+        ("%sql select -5 * 2;", (-10,)),
+        ("%sql select 5 * -2 ;", (-10,)),
+        ("%sql select 5 * - 2;", (-10,)),
+        ("%sql select x * -2 from number_table", (-8, 10, -4, 0, 10, 4, 4, 8, -4, -8)),
+        ("%sql select x *-2 from number_table", (-8, 10, -4, 0, 10, 4, 4, 8, -4, -8)),
+        ("%sql select x * - 2 from number_table", (-8, 10, -4, 0, 10, 4, 4, 8, -4, -8)),
+        ("%sql select x *- 2 from number_table", (-8, 10, -4, 0, 10, 4, 4, 8, -4, -8)),
+        ("%sql select -x * 2 from number_table", (-8, 10, -4, 0, 10, 4, 4, 8, -4, -8)),
+        ("%sql select - x * 2 from number_table", (-8, 10, -4, 0, 10, 4, 4, 8, -4, -8)),
+        ("%sql select - x* 2 from number_table", (-8, 10, -4, 0, 10, 4, 4, 8, -4, -8)),
+    ],
+)
+def test_negative_operations_query(ip, query, expected):
+    result = ip.run_cell(query).result
+    assert list(result.dict().values())[-1] == expected
+
+
+def test_bracket_var_substitution_save(ip):
+    ip.user_global_ns["col"] = "first_name"
+    ip.user_global_ns["snippet"] = "mysnippet"
+    ip.run_cell(
+        "%sql --save {{snippet}} SELECT * FROM author WHERE {{col}} = 'William' "
+    )
+    out = ip.run_cell("%sql SELECT * FROM {{snippet}}").result
+    assert out[0] == (
+        "William",
+        "Shakespeare",
+        1616,
+    )
+
+
+def test_var_substitution_save_with(ip):
+    ip.user_global_ns["col"] = "first_name"
+    ip.user_global_ns["snippet_one"] = "william"
+    ip.user_global_ns["snippet_two"] = "bertold"
+    ip.run_cell(
+        "%sql --save {{snippet_one}} SELECT * FROM author WHERE {{col}} = 'William' "
+    )
+    ip.run_cell(
+        "%sql --save {{snippet_two}} SELECT * FROM author WHERE {{col}} = 'Bertold' "
+    )
+    out = ip.run_cell(
+        """%%sql --with {{snippet_one}} --with {{snippet_two}}
+SELECT * FROM {{snippet_one}}
+UNION
+SELECT * FROM {{snippet_two}}
+"""
+    ).result
+
+    assert out[1] == (
+        "William",
+        "Shakespeare",
+        1616,
+    )
+    assert out[0] == (
+        "Bertold",
+        "Brecht",
+        1956,
+    )
+
+
+def test_var_substitution_alias(clean_conns, ip_empty, tmp_empty):
+    ip_empty.user_global_ns["alias"] = "one"
+    ip_empty.run_cell("%sql sqlite:///one.db --alias {{alias}}")
+    assert {"one"} == set(ConnectionManager.connections)
+
+
+@pytest.mark.parametrize(
+    "close_cell",
+    [
+        "%sql -x {{alias}}",
+        "%sql --close {{alias}}",
+    ],
+)
+def test_var_substitution_close_connection_with_alias(ip, tmp_empty, close_cell):
+    ip.user_global_ns["alias"] = "one"
+    process = psutil.Process()
+
+    ip.run_cell("%sql sqlite:///one.db --alias {{alias}}")
+
+    assert {Path(f.path).name for f in process.open_files()} >= {"one.db"}
+
+    ip.run_cell(close_cell)
+
+    assert "sqlite:///one.db" not in ConnectionManager.connections
+    assert "first" not in ConnectionManager.connections
+    assert "one.db" not in {Path(f.path).name for f in process.open_files()}
+
+
+def test_var_substitution_section(ip_empty, tmp_empty):
+    Path("connections.ini").write_text(
+        """
+[duck]
+drivername = duckdb
+"""
+    )
+    ip_empty.user_global_ns["section"] = "duck"
+
+    ip_empty.run_cell("%config SqlMagic.dsn_filename = 'connections.ini'")
+
+    ip_empty.run_cell("%sql --section {{section}}")
+
+    conns = ConnectionManager.connections
+    assert conns == {"duck": ANY}
+
+
+@pytest.mark.parametrize(
+    "query, expected",
+    [
+        (
+            '%sql select json(\'[{"a":1}, {"b":2}]\')',
+            "[{'a': 1}, {'b': 2}]",
+        ),
+        (
+            '%sql select \'[{"a":1}, {"b":2}]\'::json',
+            "[{'a': 1}, {'b': 2}]",
+        ),
+    ],
+)
+def test_disable_named_parameters_with_json(ip, query, expected):
+    ip.run_cell("%sql duckdb://")
+    ip.run_cell("%config SqlMagic.named_parameters='disabled'")
+    result = ip.run_cell(query).result
+    assert str(list(result.dict().values())[0][0]) == expected
+
+
+def test_disabled_named_parameters_shows_disabled_warning(ip):
+    ip.run_cell("%config SqlMagic.named_parameters='disabled'")
+    query_should_warn = "%sql select json('[{\"a\"::1}')"
+
+    with pytest.raises(UsageError) as excinfo:
+        ip.run_cell(query_should_warn)
+
+    expected_warning = (
+        'The named parameters feature is "disabled". '
+        'Enable it with: %config SqlMagic.named_parameters="enabled".\n'
+        "For more info, see the docs: "
+        "https://jupysql.ploomber.io/en/latest/api/configuration.html"
+    )
+
+    assert expected_warning in str(excinfo.value)

@@ -13,13 +13,13 @@ parts:
     - file: user-guide/tables-columns
     - file: user-guide/ggplot
     - file: user-guide/template
+    - file: user-guide/argument-expansion
     - file: user-guide/connection-file
     - file: user-guide/table_explorer
     - file: user-guide/data-profiling
 
   - caption: JupyterLab integration
     chapters:
-    - file: jupyterlab/sharing
     - file: jupyterlab/syntax-highlighting
     - file: jupyterlab/format-sql
     - file: jupyterlab/autocompletion
@@ -43,6 +43,7 @@ parts:
       - file: integrations/duckdb-native
       - file: integrations/compatibility
       - file: integrations/chdb
+      - file: integrations/spark
 
   - caption: API Reference
     chapters:

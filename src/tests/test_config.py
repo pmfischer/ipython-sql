@@ -91,7 +91,104 @@ drivername = sqlite
     assert ConnectionManager.current.dialect == "sqlite"
 
 
-def test_start_ini_default_connection_using_pyproject_if_any(tmp_empty, ip_no_magics):
+def test_config_loads_query_element_as_url_params(tmp_empty, ip_no_magics):
+    Path("connections.ini").write_text(
+        """
+[default]
+drivername = sqlite
+query = {'param1': 'value1', 'param2': 'value2'}
+"""
+    )
+    ip_no_magics.run_cell("%config SqlMagic.dsn_filename = 'connections.ini'")
+
+    load_ipython_extension(ip_no_magics)
+
+    assert set(ConnectionManager.connections) == {"default"}
+    assert ConnectionManager.current.dialect == "sqlite"
+    assert ConnectionManager.current.url == "sqlite://?param1=value1&param2=value2"
+
+
+def test_load_home_toml_if_no_pyproject_toml(
+    tmp_empty, ip_no_magics, capsys, monkeypatch
+):
+    monkeypatch.setattr(
+        Path, "expanduser", lambda path: Path(str(path).replace("~", tmp_empty))
+    )
+    home_toml = Path("~/.jupysql/config").expanduser()
+    home_toml.parent.mkdir(exist_ok=True)
+    home_toml.write_text(
+        """
+[tool.jupysql.SqlMagic]
+autocommit = false
+autolimit = 1
+style = "RANDOM"
+"""
+    )
+
+    expect = [
+        "Settings changed:",
+        r"autocommit\s*\|\s*False",
+        r"autolimit\s*\|\s*1",
+        r"style\s*\|\s*RANDOM",
+    ]
+
+    config_expected = {"autocommit": False, "autolimit": 1, "style": "RANDOM"}
+
+    os.mkdir("sub")
+    os.chdir("sub")
+
+    load_ipython_extension(ip_no_magics)
+    magic = ip_no_magics.find_magic("sql").__self__
+    combined = {**get_default_testing_configs(magic), **config_expected}
+    out, _ = capsys.readouterr()
+    assert all(re.search(substring, out) for substring in expect)
+    assert get_current_configs(magic) == combined
+
+
+def test_load_home_toml_if_sqlmagic_section_not_in_pyproject_toml(
+    tmp_empty, ip_no_magics, capsys, monkeypatch
+):
+    monkeypatch.setattr(
+        Path, "expanduser", lambda path: Path(str(path).replace("~", tmp_empty))
+    )
+    home_toml = Path("~/.jupysql/config").expanduser()
+    home_toml.parent.mkdir(exist_ok=True)
+    home_toml.write_text(
+        """
+[tool.jupysql.SqlMagic]
+autocommit = false
+autolimit = 1
+style = "RANDOM"
+"""
+    )
+
+    Path("pyproject.toml").write_text(
+        """
+[tool.jupysql]
+"""
+    )
+
+    expect = [
+        "Settings changed:",
+        r"autocommit\s*\|\s*False",
+        r"autolimit\s*\|\s*1",
+        r"style\s*\|\s*RANDOM",
+    ]
+
+    config_expected = {"autocommit": False, "autolimit": 1, "style": "RANDOM"}
+
+    os.mkdir("sub")
+    os.chdir("sub")
+
+    load_ipython_extension(ip_no_magics)
+    magic = ip_no_magics.find_magic("sql").__self__
+    combined = {**get_default_testing_configs(magic), **config_expected}
+    out, _ = capsys.readouterr()
+    assert all(re.search(substring, out) for substring in expect)
+    assert get_current_configs(magic) == combined
+
+
+def test_start_ini_default_connection_using_toml_if_any(tmp_empty, ip_no_magics):
     Path("pyproject.toml").write_text(
         """
 [tool.jupysql.SqlMagic]
@@ -130,12 +227,35 @@ drivername = someunknowndriver
     assert "Cannot start default connection" in captured.out
 
 
-def test_magic_initialization_with_no_pyproject(tmp_empty, ip_no_magics):
+def test_magic_initialization_with_no_toml(tmp_empty, ip_no_magics):
     load_ipython_extension(ip_no_magics)
 
 
-def test_magic_initialization_with_corrupted_pyproject(tmp_empty, ip_no_magics, capsys):
+def test_magic_initialization_with_corrupted_pyproject_toml(
+    tmp_empty, ip_no_magics, capsys
+):
     Path("pyproject.toml").write_text(
+        """
+[tool.jupysql.SqlMagic]
+dsn_filename = myconnections.ini
+"""
+    )
+
+    load_ipython_extension(ip_no_magics)
+
+    captured = capsys.readouterr()
+    assert "Could not load configuration file" in captured.out
+
+
+def test_magic_initialization_with_corrupted_home_toml(
+    tmp_empty, ip_no_magics, capsys, monkeypatch
+):
+    monkeypatch.setattr(
+        Path, "expanduser", lambda path: Path(str(path).replace("~", tmp_empty))
+    )
+    home_toml = Path("~/.jupysql/config").expanduser()
+    home_toml.parent.mkdir(exist_ok=True)
+    home_toml.write_text(
         """
 [tool.jupysql.SqlMagic]
 dsn_filename = myconnections.ini
@@ -184,35 +304,83 @@ style = "RANDOM"
     assert get_current_configs(magic) == combined
 
 
+def test_loading_valid_home_toml_shows_feedback_and_modifies_config(
+    tmp_empty, ip_no_magics, capsys, monkeypatch
+):
+    monkeypatch.setattr(
+        Path, "expanduser", lambda path: Path(str(path).replace("~", tmp_empty))
+    )
+    home_toml = Path("~/.jupysql/config").expanduser()
+    home_toml.parent.mkdir(exist_ok=True)
+    home_toml.write_text(
+        """
+[tool.jupysql.SqlMagic]
+autocommit = false
+autolimit = 1
+style = "RANDOM"
+"""
+    )
+
+    expect = [
+        "Loading configurations from {path}",
+        "Settings changed:",
+        r"autocommit\s*\|\s*False",
+        r"autolimit\s*\|\s*1",
+        r"style\s*\|\s*RANDOM",
+    ]
+
+    config_expected = {"autocommit": False, "autolimit": 1, "style": "RANDOM"}
+
+    os.mkdir("sub")
+    os.chdir("sub")
+
+    load_ipython_extension(ip_no_magics)
+    magic = ip_no_magics.find_magic("sql").__self__
+    combined = {**get_default_testing_configs(magic), **config_expected}
+    out, _ = capsys.readouterr()
+    expect[0] = expect[0].format(path=re.escape(str(home_toml)))
+    assert all(re.search(substring, out) for substring in expect)
+    assert get_current_configs(magic) == combined
+
+
 @pytest.mark.parametrize(
-    "file_content, param",
+    "file_content, expected_message",
     [
         (
             """
 [tool.jupysql.SqlMagic]
 """,
-            "[tool.jupysql.SqlMagic] present in {path} but empty.",
+            "[tool.jupysql.SqlMagic] present in {primary_path} but empty.",
         ),
-        ("", "Tip: You may define configurations in {path}."),
+        ("", "Tip: You may define configurations in {primary_path} or {alt_path}."),
     ],
     ids=["empty_sqlmagic_key", "missing_sqlmagic_key"],
 )
-def test_loading_pyproject_toml_display_configuration_docs_link(
-    tmp_empty, ip_no_magics, file_content, param, monkeypatch
+def test_loading_toml_display_configuration_docs_link(
+    tmp_empty, capsys, ip_no_magics, file_content, expected_message, monkeypatch
 ):
     Path("pyproject.toml").write_text(file_content)
-    toml_path = str(Path(os.getcwd()).joinpath("pyproject.toml"))
+    toml_path = Path(os.getcwd()).joinpath("pyproject.toml")
+    config_path = Path("~/.jupysql/config").expanduser()
 
     os.mkdir("sub")
     os.chdir("sub")
+
     mock = Mock()
     monkeypatch.setattr(display, "message_html", mock)
-
     load_ipython_extension(ip_no_magics)
+    out, _ = capsys.readouterr()
+
     param = (
-        f"{param.format(path=toml_path)} Please review our "
+        f"Please review our "
         f"<a href='{CONFIGURATION_DOCS_STR}'>configuration guideline</a>."
     )
+
+    expected_message = expected_message.format(
+        primary_path=str(toml_path), alt_path=str(config_path)
+    )
+
+    assert expected_message in out
     mock.assert_called_once_with(param)
 
 
@@ -239,7 +407,7 @@ github = "ploomber/jupysql"
         ),
     ],
 )
-def test_load_pyproject_toml_user_configurations_not_specified(
+def test_load_toml_user_configurations_not_specified(
     tmp_empty, ip_no_magics, capsys, file_content
 ):
     Path("pyproject.toml").write_text(file_content)
@@ -264,10 +432,11 @@ autocommit = true
         ),
         (
             """
-[tool.jupySql.SqlMagic]
+[tool.jupysql.SQLMagics]
 autocommit = true
 """,
-            "'jupySql' is an invalid section name in {path}. Did you mean 'jupysql'?",
+            "[tool.jupysql.SQLMagics] is an invalid section name in {path}. "
+            "Did you mean [tool.jupysql.SqlMagic]?",
         ),
         (
             """
@@ -359,6 +528,125 @@ autocommit = true
     out, _ = capsys.readouterr()
     assert (
         "The 'toml' package isn't installed. "
-        "To load settings from the pyproject.toml file, "
+        "To load settings from pyproject.toml or ~/.jupysql/config, "
         "install with: pip install toml"
     ) in out
+
+
+@pytest.mark.parametrize(
+    "pyproject_content, config_content, expected_messages",
+    [
+        (
+            "",
+            "",
+            [
+                (
+                    "Tip: You may define configurations in "
+                    "{pyproject_path} or {config_path}."
+                ),
+                "Did not find user configurations in {pyproject_path}.",
+                "Did not find user configurations in {config_path}.",
+            ],
+        ),
+        (
+            "",
+            "[tool.jupysql.SqlMagic]",
+            [
+                (
+                    "Tip: You may define configurations in "
+                    "{pyproject_path} or {config_path}."
+                ),
+                "Did not find user configurations in {pyproject_path}.",
+                "[tool.jupysql.SqlMagic] present in {config_path} but empty.",
+            ],
+        ),
+        (
+            "",
+            """
+[tool.jupysql.SqlMagic]
+feedback=True
+autopandas=True
+""",
+            [
+                (
+                    "Tip: You may define configurations in "
+                    "{pyproject_path} or {config_path}."
+                ),
+                "Did not find user configurations in {pyproject_path}.",
+            ],
+        ),
+        (
+            "[tool.jupysql.SqlMagic]",
+            "",
+            [
+                "[tool.jupysql.SqlMagic] present in {pyproject_path} but empty.",
+                "Did not find user configurations in {config_path}.",
+            ],
+        ),
+        (
+            "[tool.jupysql.SqlMagic]",
+            "[tool.jupysql.SqlMagic]",
+            [
+                "[tool.jupysql.SqlMagic] present in {pyproject_path} but empty.",
+                "[tool.jupysql.SqlMagic] present in {config_path} but empty.",
+            ],
+        ),
+        (
+            "[tool.jupysql.SqlMagic]",
+            """
+[tool.jupysql.SqlMagic]
+feedback=True
+autopandas=True
+""",
+            [
+                "[tool.jupysql.SqlMagic] present in {pyproject_path} but empty.",
+            ],
+        ),
+        (
+            "[tool.JupySQL.SqlMagic]",
+            "",
+            [
+                "Hint: We found 'tool.JupySQL' in {pyproject_path}. "
+                "Did you mean 'tool.jupysql'?",
+            ],
+        ),
+    ],
+)
+def test_user_config_load_sequence_and_messages(
+    tmp_empty,
+    ip_no_magics,
+    monkeypatch,
+    capsys,
+    pyproject_content,
+    config_content,
+    expected_messages,
+):
+    toml_path = Path("pyproject.toml")
+    toml_path.touch(exist_ok=True)
+    toml_path.write_text(pyproject_content)
+
+    Path("~/.jupysql").expanduser().mkdir(parents=True, exist_ok=True)
+    config_path = Path("~/.jupysql/config").expanduser()
+    config_path.touch(exist_ok=True)
+    config_path.write_text(config_content)
+
+    toml_path = str(Path(os.getcwd()).joinpath("pyproject.toml"))
+    config_path = str(Path("~/.jupysql/config").expanduser())
+
+    mock = Mock()
+    monkeypatch.setattr(display, "message_html", mock)
+    load_ipython_extension(ip_no_magics)
+    out, _ = capsys.readouterr()
+
+    param = (
+        f"Please review our "
+        f"<a href='{CONFIGURATION_DOCS_STR}'>configuration guideline</a>."
+    )
+
+    for message in expected_messages:
+        expected_message = message.format(
+            pyproject_path=str(toml_path), config_path=str(config_path)
+        )
+        assert expected_message in out
+
+    mock.assert_called_once_with(param)

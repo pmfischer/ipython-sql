@@ -19,38 +19,38 @@ install_requires = [
     "prettytable",
     # IPython dropped support for Python 3.8
     "ipython<=8.12.0; python_version <= '3.8'",
-    "ipython",
     "sqlalchemy",
     "sqlparse",
     "ipython-genutils>=0.1.0",
-    "sqlglot",
     "jinja2",
     "sqlglot>=11.3.7",
-    "ploomber-core>=0.2.7",
     'importlib-metadata;python_version<"3.8"',
+    # we removed the share notebook button in this version
+    "jupysql-plugin>=0.4.2",
+    "ploomber-core>=0.2.7",
 ]
 
 DEV = [
     "flake8",
     "pytest",
-    "pandas",
+    # 24/01/24 Pandas 2.2.0 breaking CI: https://github.com/ploomber/jupysql/issues/983
+    "pandas<2.2.0",  # previously pinned to 2.0.3
     "polars==0.17.2",  # 04/18/23 this breaks our CI
     "pyarrow",
     "invoke",
     "pkgmt",
     "twine",
     # tests
-    "duckdb<0.8.0",
+    "duckdb<1.1.0",
     "duckdb-engine",
     "pyodbc",
     # sql.plot module tests
-    "matplotlib",
+    "matplotlib==3.7.2",
     "black",
     # for %%sql --interact
     "ipywidgets",
     # for running tests for %sqlcmd explore --table
     "js2py",
-    "jupysql-plugin",
     # for monitoring access to files
     "psutil",
     # for running tests for %sqlcmd connect
@@ -73,6 +73,9 @@ INTEGRATION = [
     "redshift-connector",
     "sqlalchemy-redshift",
     "clickhouse-sqlalchemy",
+    # following two dependencies required for spark
+    "pyspark",
+    "grpcio-status",
 ]
 
 setup(

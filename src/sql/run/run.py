@@ -22,11 +22,24 @@ def run_statements(conn, sql, config, parameters=None):
 
     config
         Configuration object
+
+    Examples
+    --------
+
+    .. literalinclude:: ../../examples/run_statements.py
+
     """
     if not sql.strip():
         return "Connected: %s" % conn.name
 
     for statement in sqlparse.split(sql):
+        # strip all comments from sql
+        statement = sqlparse.format(statement, strip_comments=True)
+        # trailing comment after semicolon can be confused as its own statement,
+        # so we ignore it here.
+        if not statement:
+            continue
+
         first_word = sql.strip().split()[0].lower()
 
         if first_word == "begin":
@@ -39,6 +52,8 @@ def run_statements(conn, sql, config, parameters=None):
         # regular query
         else:
             result = conn.raw_execute(statement, parameters=parameters)
+            if is_spark(conn.dialect) and config.lazy_execution:
+                return result.dataframe
 
             if (
                 config.feedback >= 1
@@ -54,6 +69,10 @@ def run_statements(conn, sql, config, parameters=None):
 def is_postgres_or_redshift(dialect):
     """Checks if dialect is postgres or redshift"""
     return "postgres" in str(dialect) or "redshift" in str(dialect)
+
+
+def is_spark(dialect):
+    return "spark" in str(dialect)
 
 
 def select_df_type(resultset, config):
