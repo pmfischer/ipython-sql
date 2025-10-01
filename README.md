@@ -24,7 +24,7 @@
 </p>
 
 > [!TIP]
-> Deploy AI apps for free on [Ploomber Cloud!](https://ploomber.io/?utm_medium=github&utm_source=jupysql)
+> Deploy Streamlit and Dash apps for free on [Ploomber Cloud!](https://www.platform.ploomber.io/register/?utm_medium=github&utm_source=jupysql)
 
 Run SQL in Jupyter/IPython via a `%sql` and `%%sql` magics.
 
@@ -51,6 +51,9 @@ conda install jupysql -c conda-forge
 
 [Click here to see the documentation.](https://jupysql.ploomber.io)
 
+## Security
+
+To report security vulnerabilities, see [SECURITY.md](SECURITY.md)
 
 ## Credits
 

@@ -1,4 +1,5 @@
 import json
+import os
 import re
 from pathlib import Path
 from datetime import datetime
@@ -12,7 +13,6 @@ try:
     from ipywidgets import interact
 except ModuleNotFoundError:
     interact = None
-from ploomber_core.exceptions import modify_exceptions
 from IPython.core.magic import (
     Magics,
     cell_magic,
@@ -379,7 +379,6 @@ class SqlMagic(Magics, Configurable):
             line=line, cell=cell, local_ns=local_ns, is_interactive_mode=False
         )
 
-    @modify_exceptions
     def _execute(self, line, cell, local_ns, is_interactive_mode=False):
         """
         This function implements the cell logic; we create this private
@@ -667,7 +666,6 @@ class SqlMagic(Magics, Configurable):
 
     legal_sql_identifier = re.compile(r"^[A-Za-z0-9#_$]+")
 
-    @modify_exceptions
     def _persist_dataframe(
         self, raw, conn, user_ns, append=False, index=True, replace=False
     ):
@@ -746,7 +744,7 @@ def get_query_type(command: str):
 
 def set_configs(ip, file_path, alternate_path):
     """Set user defined SqlMagic configuration settings"""
-    sql = ip.find_cell_magic("sql").__self__
+    sql = ip.find_cell_magic("jupysql").__self__
     user_configs, loaded_from = util.get_user_configs(file_path, alternate_path)
     default_configs = util.get_default_configs(sql)
     table_rows = []
@@ -811,6 +809,12 @@ def load_SqlMagic_configs(ip):
 
 def load_ipython_extension(ip):
     """Load the magics, this function is executed when the user runs: %load_ext sql"""
+
+    # If running within Databricks, do not use the sql magics
+    if "DATABRICKS_RUNTIME_VERSION" in os.environ:
+        del SqlMagic.magics["cell"]["sql"]
+        del SqlMagic.magics["line"]["sql"]
+
     sql_magic = SqlMagic(ip)
     _set_sql_magic(sql_magic)
     ip.register_magics(sql_magic)

@@ -1,6 +1,29 @@
 # CHANGELOG
 
-## 0.10.15dev
+## 0.11.2dev
+
+## 0.11.1 (2025-03-25)
+
+* [Fix] No longer showing the Slack link in error messages
+
+## 0.11.0 (2025-03-03)
+
+* [API Change] Disabled `%sql` and `%%sql` on Databricks ([#1047](https://github.com/ploomber/jupysql/issues/1047))
+
+## 0.10.17 (2025-01-08)
+
+* [Feature] Disable full stack trace when using spark connect ([#1011](https://github.com/ploomber/jupysql/issues/1011)) (by [@b1ackout](https://github.com/b1ackout))
+
+## 0.10.16 (2024-11-07)
+
+* [Fix] Updates docs for querying data frames when using DuckDB SQLAlchemy connections
+* [Fix] Support for scanning data frames when using native DuckDB connections due to changes in DuckDB's API
+
+## 0.10.15 (2024-11-05)
+
+*Drops compatibility with Python 3.8*
+
+* [Fix] Compatibility with `prettytable>=3.12.0`
 
 ## 0.10.14 (2024-09-18)
 
